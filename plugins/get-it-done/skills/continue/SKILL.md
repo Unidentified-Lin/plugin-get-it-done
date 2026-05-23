@@ -52,9 +52,10 @@ IF state.status == RUNNING AND state.batch_ended_at == null:
     # If status=RUNNING and phase=PLANNING, we have a PLANNING crash.
     IF state.phase == PLANNING:
         IF state.batch_started_at and (now - state.batch_started_at) < 5min:
-            # Recent crash; assume planner is still working
-            append "<ISO> [CRASH_DETECTED] PLANNING singleton still working; waiting..." to progress_log.md
-            EXIT and retry /continue in ~30s
+            # Recent crash; assume planner is still working — we need real wall-clock
+            # time to elapse before re-checking, so stop and let the user re-issue /continue.
+            append "<ISO> [CRASH_WAIT] PLANNING singleton still working; user should retry /continue shortly" to progress_log.md
+            EXIT (real-time wait — dispatcher cannot make progress by looping immediately)
         ELSE:
             # Stale PLANNING batch (>5min old); assume planner crashed mid-execution
             # Restore safety: clear any partial task_queue or research_requests state
@@ -63,7 +64,7 @@ IF state.status == RUNNING AND state.batch_ended_at == null:
             atomically rewrite state.md: status=WAITING, phase=PLANNING, batch_ended_at=<now>, 
                                         batch_id=null, active_agents=[], last_updated=<now>
             # DO NOT modify task_queue.md or research_requests.md yet — let planner re-read on next tick
-            EXIT; next /continue will re-enter PLANNING with clean status
+            GOTO step 3 (continue this same invocation with clean PLANNING state)
     
     claimed_tasks := every task in task_queue.md with Claimed_by != null
     claimed_milestones := every milestone in task_queue.md ## Milestones with Claimed_by != null
@@ -182,7 +183,7 @@ PHASE_BRANCH_PLANNING:
             stale_claimed := every RQ with Status: open AND Claimed_by != null
             IF stale_claimed non-empty:
                 re-enter step 2 logic
-            set phase = PLANNING; YIELD; EXIT
+            set phase = PLANNING; GOTO step 2 (continue this invocation — next tick spawns planner)
         batch := []
         FOR rq IN open_rqs[: N_MAX]:
             batch.append({ role: analyst, task_id: rq.RQ-id, scratch: null })
@@ -465,27 +466,25 @@ Decision tree (checked in order):
 
 2. Reporting phase: finalize and EXIT
    IF phase == REPORTING: run report_and_reflect(); EXIT
+   (report_and_reflect transitions phase to COMPLETE before returning.)
 
-3. Context budget guard (Stage 5+) — check BEFORE phase transition
+3. Context budget guard — real stopping criterion, not a counter
    IF accumulated sub-agent results exceed 80% of session context budget:
-     → Yield with progress note "[CONTEXT_PAUSE] pausing for recovery; next /continue resumes"
-     → Write state.md with status: WAITING (remain in current phase)
+     → Append "[CONTEXT_PAUSE] pausing for recovery; next /continue resumes" to progress_log.md
+     → Write state.md with status: WAITING (remain in current phase; the next /continue
+       picks up via Step 2 crash recovery)
      → Append context_utilization metric to progress_log.md
-     → EXIT
+     → EXIT (user will manually re-issue /continue when ready, OR a fresh session
+       restart is anyway required to clear context)
 
-4. Batch count safety ceiling (Stage 5+) — check BEFORE phase transition
-   IF completed_batches_in_this_invocation >= 3:
-     → Yield with progress note "[BATCH_CEIL] completed 3 batches; pausing to prevent runaway"
-     → EXIT
-
-5. Phase transition: continue at step 2
-   IF phase changed (e.g., PLANNING→ANALYZING or ANALYZING→EXECUTING): GOTO step 2
-
-6. Otherwise: continue inner loop
-   ELSE: GOTO step 2 (next inner tick within this same /continue invocation)
+4. Otherwise — keep going. The dispatcher self-coordinates:
+   GOTO step 2 (next inner tick in the SAME /continue invocation)
+   This covers both phase transitions (PLANNING→ANALYZING→EXECUTING→REPORTING) and
+   consecutive batches within the same phase. There is no artificial batch ceiling —
+   the dispatcher runs as long as it can make progress.
 ```
 
-The dispatcher can run many inner ticks in a single /continue invocation, up to the safety limits above. Safety checks (context, batch ceiling) are evaluated BEFORE any phase transition to prevent runaway loops — yield conservatively when either safety criterion triggers.
+**Design intent**: `/continue` is the dispatcher; once it starts it owns coordination until it cannot proceed (terminal phase or genuine context exhaustion). It does not yield mid-progress to ask the user to press a button. The only legitimate reasons to stop are: the goal is done, the team is blocked on a human decision, or the session's context budget is genuinely full.
 
 ## `report_and_reflect()` — runs once when the goal closes
 
@@ -501,11 +500,23 @@ Reflector is NOT part of the relay. It runs once per goal, after every task reac
 6. Reflector returns; EXIT. Reflection failures are logged ([REFLECT_FAIL]) but do NOT roll back COMPLETE.
 ```
 
+## Dispatcher self-loop principle
+
+**The dispatcher keeps ticking inside a single `/continue` invocation until it cannot proceed.** It does NOT yield back to the user just because some batch counter elapsed. Inner-loop termination is decided by **real conditions**, not arbitrary ceilings:
+
+1. **Terminal phase** — `phase ∈ {COMPLETE, AWAITING_HUMAN, IDLE}` → stop. The work is done, blocked on a human, or absent.
+2. **Context exhaustion** — accumulated sub-agent results would overflow the session's context budget → stop. A new `/continue` from the user starts a fresh session that can resume via Step 2 crash-recovery.
+3. **Crash-retry wait** — a singleton planner is in flight and the dispatcher needs real wall-clock time to elapse before checking again (Step 2 sub-case 0, recent-crash branch) → stop and let the user re-issue `/continue` when ready.
+
+In every other situation — phase transitions, batch completions, even many batches in a row — the dispatcher loops back to Step 2 and picks the next batch within the same invocation. No `ScheduleWakeup`, no artificial batch cap.
+
 ## Exit conditions
 
 - `phase: COMPLETE` — goal achieved.
 - `phase: AWAITING_HUMAN` — blocker (DAG, dependency deadlock, validator escalation, planner-flagged).
 - `phase: IDLE` — no active goal.
+- `[CONTEXT_PAUSE]` — context budget guard tripped. State is preserved (`status: WAITING` in current phase); a fresh `/continue` resumes via crash recovery.
+- `[CRASH_WAIT]` — planner singleton recently crashed and we need real time to elapse before retrying. Fresh `/continue` from the user re-checks.
 
 ## What the dispatcher does NOT do
 

@@ -139,5 +139,5 @@ After the first cycle completes, output (in 繁體中文 per project convention)
 最後一個 batch：<batch_id from last ## Batch block, or "(尚無)">
 下一步行動：<intent line from latest ## Batch block, or "spawn planner">
 
-要繼續自主推進，執行 /continue。要暫停，編輯 team/state.md 並設定 phase: AWAITING_HUMAN。
+dispatcher 已啟動並會自我循環推進，直到目標完成、卡在人為決策、或 context 用盡。要暫停請編輯 team/state.md 並設定 phase: AWAITING_HUMAN。
 ```
