@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "get-done-marketplace",
+  "owner": {
+    "name": "Unidentified-Lin"
+  },
+  "plugins": [
+    {
+      "name": "get-it-done",
+      "source": "./plugins/get-it-done",
+      "description": "Autonomous 5-agent team (Planner, Analyst, Executor, Validator + post-cycle Reflector) with a thin dispatcher (/continue). Main relay: PLANNING → ANALYZING? → EXECUTING ↔ VALIDATING → REPORTING → COMPLETE off project-local state in team/. Reflector runs once post-completion as an independent sub-agent."
+    }
+  ]
+}
