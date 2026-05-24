@@ -15,6 +15,7 @@ claude plugin marketplace add Unidentified-Lin/plugin-get-done
 | Plugin | Skills | Description |
 |--------|--------|-------------|
 | `get-it-done` | `/objective` | Set business goal and initialize agent team, v2 state schema, bootstrap workspace |
+| | `/adjust` | Refine the active goal mid-flight — soft (append constraints, preserve task_queue/prd/findings) or hard (rewrite goal, reset planner artifacts). Both preserve progress_log, validation_log, and team/context |
 | | `/continue` | Batch-aware dispatcher: schedules executors/validators/analysts in parallel (N≤5), manages crash recovery, enforces DAG & collision detection, context budgets |
 
 ## 🔧 Install a Plugin
@@ -47,6 +48,7 @@ plugins/get-it-done/
   
   skills/
     objective/SKILL.md          # Goal bootstrap: state.md schema, workspace init
+    adjust/SKILL.md             # Mid-flight goal refinement (soft/hard); auto-pauses RUNNING dispatcher via AWAITING_HUMAN
     continue/SKILL.md           # Dispatcher: Step 0-11 inner loop (crash recovery, DAG check, batch pool, atomic pre-write, spawn, parse, persist, close, loop)
   
   templates/
@@ -79,6 +81,9 @@ plugins/get-it-done/
 # Continue (repeatable across sessions)
 /continue
 
+# Refine mid-flight when testing reveals direction is off or specs need more detail
+/adjust 另外要求：節點刪除前需確認對話框，且匯出 PNG 要含浮水印
+
 # Check status
 cat team/state.md                          # Current phase, batch history
 cat team/progress_log.md                   # Execution timeline
@@ -94,4 +99,4 @@ cat team/context/domain_knowledge.md       # Project learnings
 
 ---
 
-**Version**: 0.6.0 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin
+**Version**: 0.8.0 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin

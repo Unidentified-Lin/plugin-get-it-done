@@ -159,7 +159,8 @@ PHASE_BRANCH_PLANNING:
     IF phase == IDLE:
         EXIT with "沒有活躍目標 — 使用 /objective <goal> 設定目標"
     IF phase == AWAITING_HUMAN:
-        EXIT with the most recent [BLOCKER] / [BAD_DAG] / [BAD_MILESTONE] / blocked-task summary from progress_log.md
+        EXIT with the most recent [BLOCKER] / [BAD_DAG] / [BAD_MILESTONE] / blocked-task summary from progress_log.md.
+        Append the hint: "若要修訂目標或補充需求，使用 /adjust <修訂訊息>。"
     IF phase == COMPLETE:
         EXIT cleanly
     IF phase == REPORTING:

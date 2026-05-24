@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "get-it-done",
   "displayName": "Get It Done Agent Team",
-  "version": "0.7.0",
-  "description": "Autonomous 5-agent team (Planner, Analyst, Executor, Validator + post-cycle Reflector) with a batch-aware dispatcher (/continue). v2 architecture complete: dispatcher owns all shared-state writes; sub-agents return structured `---agent-return---` YAML; tasks form an explicit DAG with milestones; EXECUTING batches heterogeneous (mix per-task / milestone validators + reworks + new executors), ANALYZING batches fan out one analyst per independent research request, all bounded by N=5; planner remains a singleton. Milestone validators gate downstream milestones on integration-level criteria. Stage 5: agent_rules seeded with v2-aware initial rules (PR-001..016, AR-001..005, ER-001..011, VR-001..006, RR-001..008).",
+  "version": "0.8.0",
+  "description": "Autonomous 5-agent team (Planner, Analyst, Executor, Validator + post-cycle Reflector) with a batch-aware dispatcher (/continue). Three user entrypoints: /objective sets a fresh goal, /adjust refines the active goal mid-flight (soft: append constraints, preserve artifacts; hard: rewrite goal, reset planner artifacts — both preserve progress/validation log and context), /continue runs the dispatcher loop. v2 architecture: dispatcher owns all shared-state writes; sub-agents return structured `---agent-return---` YAML; tasks form an explicit DAG with milestones; EXECUTING batches heterogeneous (mix per-task / milestone validators + reworks + new executors), ANALYZING batches fan out one analyst per independent research request, all bounded by N=5; planner remains a singleton. Milestone validators gate downstream milestones on integration-level criteria. Stage 5: agent_rules seeded with v2-aware initial rules (PR-001..016, AR-001..005, ER-001..011, VR-001..006, RR-001..008).",
   "author": {
     "name": "Unidentified-Lin"
   },
