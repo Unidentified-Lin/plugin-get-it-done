@@ -413,7 +413,7 @@ Milestone status is derived (see task_queue.md "Derivation rule") — the dispat
 
 - In `## Milestones` section, **first increment** milestone `ValidatorAttempts` by 1, then append to the milestone's `Validation Results` array with `{ attempt_no: <milestone.ValidatorAttempts after increment>, verdict, fail_reasons, task_ids_to_rework, escalate_to_blocked, notes, at }`. Clear `Claimed_by`, `Claimed_at`.
 - Append `MVAL-XXX` entry to `team/validation_log.md` (next monotonic MVAL number; dedup-key is `(milestone_id, attempt_no)`).
-- If `verdict == pass`: no per-task changes; milestone_status() will derive `validated` from the latest VR entry. Downstream-milestone tasks become eligible on the next tick. **Planned-pause check**: if the milestone entry has `PauseAfter: true`, set a transient flag `planned_pause_milestone = <milestone_id>` and `planned_pause_reason = <milestone.PauseReason>`. Step 11 will read this flag and EXIT cleanly after Step 10 closes the batch (soft pause: phase remains EXECUTING, status WAITING — the user's next /continue resumes the downstream milestone naturally).
+- If `verdict == pass`: no per-task changes; milestone_status() will derive `validated` from the latest VR entry. Downstream-milestone tasks become eligible on the next tick. **Planned-pause check**: if the milestone entry has `PauseAfter: true`, **append** an entry `{ milestone_id: <M-X>, reason: <milestone.PauseReason> }` to a transient list `planned_pause_list` (initialise to `[]` at the start of Step 9 if not already set). The list is a list — not a single value — because a heterogeneous batch can contain multiple milestone validators, and each passing PauseAfter milestone must be announced (the previous single-value design clobbered earlier entries). Step 11 will read this list and EXIT cleanly after Step 10 closes the batch (soft pause: phase remains EXECUTING, status WAITING — the user's next /continue resumes the next downstream milestone naturally).
 - If `verdict == fail` AND `escalate_to_blocked == false`:
   - If `task_ids_to_rework` is non-empty: for each `task_id` in the list, set that task's `Status: needs_rework`, clear `Artifact`. The next tick's Step 5 will re-pick them as P3 (rework) items. Milestone_status() now derives `pending` (because tasks are no longer all done); once they all re-reach done, derivation flows to `tasks_done` and Step 5 P2 will spawn another milestone validator that reads the appended VR entry as context.
   - If `task_ids_to_rework` is empty (structural failure — validator couldn't name specific tasks to blame):
@@ -470,13 +470,14 @@ Decision tree (checked in order):
    (report_and_reflect transitions phase to COMPLETE before returning.)
 
 3. Planned pause — soft EXIT at planner-declared checkpoints
-   IF planned_pause_milestone is set (Step 9 saw a passing milestone with PauseAfter: true):
-     → Append "<ISO> [PLANNED_PAUSE] <milestone_id> — <planned_pause_reason>" to progress_log.md
+   IF planned_pause_list is non-empty (Step 9 saw one or more passing PauseAfter:true milestones in this batch):
+     → For each entry e in planned_pause_list (in milestone-id ascending order):
+         Append "<ISO> [PLANNED_PAUSE] <e.milestone_id> — <e.reason>" to progress_log.md
      → state.md is already at status: WAITING (Step 10 close); phase remains EXECUTING.
        Do NOT touch phase — soft pause means the user's next /continue resumes naturally
        on the next downstream milestone.
-     → EXIT with a user-facing message: "規劃中於 <milestone_id> 暫停 — <planned_pause_reason>。
-       完成人工驗收後執行 /continue 繼續下一個 milestone。"
+     → EXIT with a user-facing message listing every paused milestone:
+       "規劃中暫停：<M-X: reason; M-Y: reason; ...>。完成人工驗收後執行 /continue 繼續下一個 milestone。"
 
 4. Otherwise — keep going. The dispatcher self-coordinates:
    GOTO step 2 (next inner tick in the SAME /continue invocation)

@@ -43,19 +43,43 @@ IF phase == COMPLETE:
     若否 → EXIT；若是 → 強制走 hard 模式（跳過 Step 2 的 soft 選項）。
 
 IF status == RUNNING (dispatcher 正在跑或上次被中斷):
-    # 自動暫停 — 不取消已 spawn 的 sub-agents 結果；下一次 /continue 的 Step 2
-    # crash recovery 會把他們回收。
+    # 重要：/adjust 是同步使用者動作。若 status=RUNNING，代表前一輪 /continue 在
+    # spawn 階段崩潰 / 被 context 用盡截斷 / 被中斷。那些 sub-agents 的 return
+    # 已經無法被回收（他們的 session 結束了）。所以必須在這裡主動清掉 in-flight
+    # 標記，否則 task_queue 會留下永遠不會關閉的 Claimed_by — Step 3 之後 state
+    # 會切到 PLANNING/WAITING，下一次 /continue 的 Step 2 不會做 crash recovery
+    # （條件是 RUNNING），那些 claimed/validating 的 task 就會卡死。
     paused_batch := state.batch_id
-    append "<ISO> [ADJUST_PAUSE_REQUESTED] batch=<paused_batch> — user 透過 /adjust 介入" to progress_log.md
-    rewrite state.md YAML（保留所有其他欄位）：
+    append "<ISO> [ADJUST_PAUSE_REQUESTED] batch=<paused_batch> — user 透過 /adjust 介入；clearing in-flight claims" to progress_log.md
+
+    # 1. 回滾 task_queue.md：所有 in-flight task 都還原成 pre-claim 狀態。
+    FOR each task in task_queue.md WHERE Claimed_by != null:
+        IF task.Status == claimed:    set task.Status = pending     ; clear Claimed_by / Claimed_at
+        IF task.Status == validating: set task.Status = executed    ; clear Claimed_by / Claimed_at
+        (保留 Validation Results、Artifact、Attempts 等已持久化欄位)
+
+    # 2. 回滾 milestone：清掉 mval-* claim（無其他 milestone 狀態要動）。
+    FOR each milestone in task_queue.md ## Milestones WHERE Claimed_by != null:
+        clear Claimed_by / Claimed_at
+
+    # 3. 回滾 research_requests.md：被 claim 但未完成的 RQ 回到可被重新指派。
+    FOR each RQ in research_requests.md WHERE Status == open AND Claimed_by != null:
+        clear Claimed_by / Claimed_at
+
+    # 4. 寫 state.md（明示完整 YAML，不要只覆寫部分欄位）：
+    rewrite state.md YAML block:
+        schema_version: 2
         phase: AWAITING_HUMAN
         status: WAITING
+        batch_id: null
+        batch_started_at: null
         batch_ended_at: <ISO now>
         active_agents: []
+        goal_set: <unchanged, usually true>
         last_updated: <ISO now>
-        # batch_id 保留（讓下次 /continue 的 Step 2 認得這個未關閉的 batch）
-    告知 user：「目前 batch <paused_batch> 已標記暫停；其 sub-agent 結果會在下次 /continue 的 crash recovery 中被回收。」
-    繼續往下走（注意：之後 Step 3 會把 phase 從 AWAITING_HUMAN 改為 PLANNING）。
+
+    告知 user：「前一輪 batch <paused_batch> 的 in-flight 標記已清理（claimed→pending、validating→executed）；那些 sub-agent 的結果若有崩潰中遺失將由 planner / 下一輪 executor 重新處理。」
+    繼續往下走進入 Step 2（之後 Step 3 會把 phase 從 AWAITING_HUMAN 改為 PLANNING）。
 
 OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTING, AWAITING_HUMAN}):
     直接進入 Step 2。
@@ -119,7 +143,7 @@ OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTI
 
 向 user 確認：「即將 hard 替換目標。task_queue.md、prd.md、findings、workspace 將被清空（progress_log、validation_log、context 保留）。確認嗎？」若否 → EXIT。
 
-1. **Overwrite `team/goal.md`**：
+1. **Overwrite `team/goal.md`**（先讀舊檔抽出 prior Refinement History 條目以便保留累積）：
    ```markdown
    # Active Goal
 
@@ -142,10 +166,11 @@ OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTI
    <ISO now>
 
    ## Refinement History
+   <若舊 goal.md 已有 ## Refinement History 區段，把它底下所有現有 bullet 原樣保留在這裡>
    - <ISO>: hard — <user 訊息原文>
    ```
 
-   注意：hard 模式也記錄 Refinement History（後續若再次 /adjust 可累積）。
+   注意：先 Read 舊 goal.md 抽出 prior `## Refinement History` 區段的 bullets（若存在），整個 list 接在新區段下、再 append 本次 hard entry。避免每次 hard 覆寫都清空之前的修訂史。
 
 2. **重置 planner artifacts**（同 /objective Step 4 的指令）：
    ```bash
@@ -162,7 +187,9 @@ OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTI
    rm -f team/prd.md
    ```
 
-3. **不動**：`team/progress_log.md`、`team/validation_log.md`、`team/context/*`、`${CLAUDE_PLUGIN_DATA}/team_learnings/*`、`team/state.md` 中的 `## Batch` 歷史 block（與 /objective 一致 — 歷史保留以供追溯）。
+3. **不動**：`team/progress_log.md`、`team/validation_log.md`、`team/context/*`、`${CLAUDE_PLUGIN_DATA}/team_learnings/*`、`team/state.md` 中的 `## Batch` 歷史 block。
+
+   注意：與 `/objective` 在這點上**刻意不同** — `/objective` 會刪除舊的 ## Batch 區塊（因為是全新目標、歷史無關），但 `/adjust` hard 是在同一個目標的脈絡下換方向，保留 batch 歷史以便追溯先前嘗試。
 
 4. **Rewrite `team/state.md` YAML block**：
    ```yaml

@@ -82,7 +82,7 @@ claude plugin details get-it-done
 | `patterns.md` | 跨循環觀察到的模式。一個檔案同時容納兩種生命週期狀態：**provisional**（1-2 次觀察）與 **promoted**（3+ 次觀察、已穩定）。預設帶 P-001, P-002。 |
 | `errors.md` | 反覆出現的失敗模式（ERR-XXX），依 8 種 Category enum 分類。 |
 | `handoff_lessons.md` | Agent 之間的交棒契約教訓（HL-XXX）——上一棒該留下什麼下一棒才接得住。 |
-| `agent_rules/planner.md` | Planner 的累積規則（PR-XXX）。預設帶 PR-001..016（含 v2 DAG 自查、empty deps 即平行槓桿、research 獨立性、source 衝突保護、milestone criteria 等）。 |
+| `agent_rules/planner.md` | Planner 的累積規則（PR-XXX）。預設帶 PR-001..019（含 v2 DAG 自查、empty deps 即平行槓桿、research 獨立性、source 衝突保護、milestone criteria、PauseAfter 規範等）。 |
 | `agent_rules/{analyst,executor,validator,reflector}.md` | 各 agent 的累積規則（AR/ER/VR/RR-XXX）。預設帶 AR-001..005、ER-001..011、VR-001..006、RR-001..008（v2-aware）。 |
 | `proposed_changes.md` | Reflector 對 plugin source 本身提出的修改 diff —— 等人類套用後出新版。 |
 

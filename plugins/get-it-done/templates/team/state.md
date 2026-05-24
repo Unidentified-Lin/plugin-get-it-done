@@ -42,6 +42,12 @@ Parallelism (Stage 3): `1 <= len(active_agents) <= 5` while `status: RUNNING`. E
 
 Reflector is **not** a phase; it runs once after `REPORTING → COMPLETE` as an independent post-cycle sub-agent.
 
+### Planned-pause soft EXIT
+
+`PLANNED_PAUSE` is **not** a phase — it is a *soft exit reason* the dispatcher writes to `progress_log.md` and then EXITs cleanly. It fires when a milestone validator returns `verdict: pass` for a milestone whose entry has `PauseAfter: true` (see `task_queue.md`). After the EXIT, `phase` stays at `EXECUTING` and `status` is `WAITING` (Step 10 close already ran). The user's next `/continue` resumes naturally on the next downstream milestone — no phase change required, no manual unblock needed.
+
+See planner rule `PR-019` for when planners may set `PauseAfter`.
+
 ## Transition Rules
 
 ```
@@ -50,6 +56,7 @@ PLANNING       → ANALYZING       (planner emitted research_requests)
 ANALYZING      → PLANNING        (all analyst batches returned; planner re-runs)
 PLANNING       → EXECUTING       (task_queue ready, metrics ready, DAG validates)
 EXECUTING      → EXECUTING       (next batch — mix of executors, validators, reworks, milestone validators)
+EXECUTING      → EXECUTING (EXIT) (milestone validator passed a PauseAfter:true milestone → [PLANNED_PAUSE]; soft EXIT, next /continue resumes)
 EXECUTING      → REPORTING       (all tasks done AND all milestones validated)
 REPORTING      → COMPLETE        (dispatcher writes [GOAL_COMPLETE]; spawns reflector independently)
 COMPLETE       → IDLE            (cleared by next /objective)

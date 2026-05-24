@@ -36,11 +36,11 @@ claude plugin install Unidentified-Lin/plugin-get-done:plugins/get-it-done
 
 plugins/get-it-done/
   .claude-plugin/
-    plugin.json                 # Plugin manifest (v0.6.0, Stage 5)
+    plugin.json                 # Plugin manifest (Stage 5+)
   README.md                     # Full architecture & usage guide
   
   agents/
-    planner.md                  # Decompose goal → DAG + PRD (16 rules PR-001..018)
+    planner.md                  # Decompose goal → DAG + PRD (rules PR-001..019)
     analyst.md                  # Research single RQ-X independently (5 rules AR-001..005)
     executor.md                 # Implement task T-XXX (11 rules ER-001..011)
     validator.md                # Per-task & milestone validation (6 rules VR-001..006)

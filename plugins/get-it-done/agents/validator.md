@@ -90,7 +90,7 @@ When the dispatcher spawns you with `mode: milestone` and `task_id: M<n>`, every
 
 In addition to the standard reads:
 
-1. `team/task_queue.md` `## Milestones` section → find your `M<n>` entry. Read its `Tasks:` list and `Acceptance Criteria:` (the integration-level criteria, written by Planner).
+1. `team/task_queue.md` `## Milestones` section → find your `M<n>` entry. Read its `Tasks:` list and `Acceptance Criteria:` (the integration-level criteria, written by Planner). Ignore `PauseAfter` / `PauseReason` — those are dispatcher-side metadata for soft-pause checkpoints, not validation inputs.
 2. For every `T-X` in the milestone's `Tasks:` list:
    - Read the task's `Artifact:` path.
    - Read the task's most recent `Validation Results` entry (so you know what the per-task validator already covered — don't re-judge the same things).
