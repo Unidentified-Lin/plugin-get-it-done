@@ -94,6 +94,12 @@ Planner writes one entry per milestone alongside the task list. The dispatcher c
                             per-task metrics are individually verified by
                             per-task validators; this layer catches gaps
                             between tasks that no single task's criteria covers)
+- **PauseAfter**: false           # optional; default false. When true AND a milestone validator passes this milestone,
+                                  # the dispatcher emits [PLANNED_PAUSE] and EXITs cleanly (soft pause — phase stays
+                                  # EXECUTING/WAITING so the next /continue resumes the downstream milestone). Use
+                                  # ONLY at natural human-review boundaries (UX feel, real-world testing, external
+                                  # sign-off) — see planner rule PR-019.
+- **PauseReason**: null           # required when PauseAfter is true — one-line reason shown to the user at pause
 - **Validation Results**: []     # appended each time a milestone validator returns
 ```
 

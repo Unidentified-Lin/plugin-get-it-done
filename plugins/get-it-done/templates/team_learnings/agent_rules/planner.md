@@ -77,6 +77,10 @@ _Updated by Reflector. Read by Planner at the start of every run._
 **Rule**: When you are spawned, immediately check the pre-existing files: if `prd.md` exists but lacks the `## Self-Audit` section, OR if `task_queue.md` contains task headings (`### T-XXX:`) but any entry is missing required fields (Status, Milestone, Dependencies, Acceptance Criteria), assume a prior crash left half-written output. In either case: **delete `prd.md`, `task_queue.md`, `metrics.md`, and `research_requests.md`** and restart your planning from scratch using only `goal.md` as input. This ensures crash recovery does not propagate stale partial state forward.
 **Reason**: Dispatcher cannot atomically backup/restore planner output in v2 (planner writes to multiple files asynchronously). Planner crash detection is the responsibility of the planner itself — if you see incomplete output, it's unsafe to build on; always rebuild from scratch.
 
+### PR-019 | Priority: high
+**Rule**: Default `PauseAfter: false` on every milestone — the dispatcher autopilots through milestones to COMPLETE without stopping. Set `PauseAfter: true` (with a one-line `PauseReason`) ONLY at a milestone whose acceptance genuinely requires human-only judgment that no validator agent (including milestone validator + Claude-for-Chrome browser validation) can substitute: UX feel ("does the animation feel right?"), real-world device testing, stakeholder sign-off, production data correctness review, or irreversible side-effect gates (live deploy, send-money-to-users). For a typical goal, expect 0–1 PauseAfter marks total; >2 is almost certainly over-pausing. Per-task pauses are not supported — if a task needs human review, lift it into its own milestone.
+**Reason**: User wants autopilot by default; manual pauses are a planning-time decision, not a runtime convenience. Each PauseAfter forces a human round-trip that breaks momentum, so the bar is "the validator agents literally cannot judge this," not "I'd feel safer if a human looked." Marking too many points defeats the autopilot intent.
+
 ## Format
 
 ```

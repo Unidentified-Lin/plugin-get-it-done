@@ -16,7 +16,7 @@ claude plugin marketplace add Unidentified-Lin/plugin-get-done
 |--------|--------|-------------|
 | `get-it-done` | `/objective` | Set business goal and initialize agent team, v2 state schema, bootstrap workspace |
 | | `/adjust` | Refine the active goal mid-flight — soft (append constraints, preserve task_queue/prd/findings) or hard (rewrite goal, reset planner artifacts). Both preserve progress_log, validation_log, and team/context |
-| | `/continue` | Batch-aware dispatcher: schedules executors/validators/analysts in parallel (N≤5), manages crash recovery, enforces DAG & collision detection, context budgets |
+| | `/continue` | Batch-aware dispatcher: autopilots from goal to COMPLETE; only stops at terminal phase, planner-declared PauseAfter milestones, or crash recovery. Schedules executors/validators/analysts in parallel (N≤5), enforces DAG & collision detection |
 
 ## 🔧 Install a Plugin
 
@@ -68,7 +68,7 @@ plugins/get-it-done/
 - **Milestone-level validation**: Integration-level acceptance criteria on top of per-task validation
 - **Crash recovery**: Three sub-cases (PLANNING timeout, sub-agent interrupted, batch close interrupted) with idempotency guarantees
 - **Collision detection**: Source-path overlaps prevented via `Touches` field + dispatcher pool check
-- **Context budget guards**: Yield when session context exceeds 80% or 3 batches completed
+- **Autopilot with planned pauses**: Dispatcher runs to COMPLETE without context-budget yields; planner decides pause checkpoints at planning time via `PauseAfter: true` on milestones (e.g. UX review, real-world testing). Soft pause — next /continue resumes naturally
 - **Dual-tier learning**: A-side rules survive plugin updates (cross-project); B-side rules live in `team/context/` (project-specific)
 - **Full 繁體中文 compliance**: All CLI output in Traditional Chinese
 
@@ -99,4 +99,4 @@ cat team/context/domain_knowledge.md       # Project learnings
 
 ---
 
-**Version**: 0.8.0 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin
+**Version**: 0.9.0 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin

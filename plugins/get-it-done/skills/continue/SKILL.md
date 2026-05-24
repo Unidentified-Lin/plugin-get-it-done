@@ -413,7 +413,7 @@ Milestone status is derived (see task_queue.md "Derivation rule") — the dispat
 
 - In `## Milestones` section, **first increment** milestone `ValidatorAttempts` by 1, then append to the milestone's `Validation Results` array with `{ attempt_no: <milestone.ValidatorAttempts after increment>, verdict, fail_reasons, task_ids_to_rework, escalate_to_blocked, notes, at }`. Clear `Claimed_by`, `Claimed_at`.
 - Append `MVAL-XXX` entry to `team/validation_log.md` (next monotonic MVAL number; dedup-key is `(milestone_id, attempt_no)`).
-- If `verdict == pass`: no per-task changes; milestone_status() will derive `validated` from the latest VR entry. Downstream-milestone tasks become eligible on the next tick.
+- If `verdict == pass`: no per-task changes; milestone_status() will derive `validated` from the latest VR entry. Downstream-milestone tasks become eligible on the next tick. **Planned-pause check**: if the milestone entry has `PauseAfter: true`, set a transient flag `planned_pause_milestone = <milestone_id>` and `planned_pause_reason = <milestone.PauseReason>`. Step 11 will read this flag and EXIT cleanly after Step 10 closes the batch (soft pause: phase remains EXECUTING, status WAITING — the user's next /continue resumes the downstream milestone naturally).
 - If `verdict == fail` AND `escalate_to_blocked == false`:
   - If `task_ids_to_rework` is non-empty: for each `task_id` in the list, set that task's `Status: needs_rework`, clear `Artifact`. The next tick's Step 5 will re-pick them as P3 (rework) items. Milestone_status() now derives `pending` (because tasks are no longer all done); once they all re-reach done, derivation flows to `tasks_done` and Step 5 P2 will spawn another milestone validator that reads the appended VR entry as context.
   - If `task_ids_to_rework` is empty (structural failure — validator couldn't name specific tasks to blame):
@@ -469,23 +469,25 @@ Decision tree (checked in order):
    IF phase == REPORTING: run report_and_reflect(); EXIT
    (report_and_reflect transitions phase to COMPLETE before returning.)
 
-3. Context budget guard — real stopping criterion, not a counter
-   IF accumulated sub-agent results exceed 80% of session context budget:
-     → Append "[CONTEXT_PAUSE] pausing for recovery; next /continue resumes" to progress_log.md
-     → Write state.md with status: WAITING (remain in current phase; the next /continue
-       picks up via Step 2 crash recovery)
-     → Append context_utilization metric to progress_log.md
-     → EXIT (user will manually re-issue /continue when ready, OR a fresh session
-       restart is anyway required to clear context)
+3. Planned pause — soft EXIT at planner-declared checkpoints
+   IF planned_pause_milestone is set (Step 9 saw a passing milestone with PauseAfter: true):
+     → Append "<ISO> [PLANNED_PAUSE] <milestone_id> — <planned_pause_reason>" to progress_log.md
+     → state.md is already at status: WAITING (Step 10 close); phase remains EXECUTING.
+       Do NOT touch phase — soft pause means the user's next /continue resumes naturally
+       on the next downstream milestone.
+     → EXIT with a user-facing message: "規劃中於 <milestone_id> 暫停 — <planned_pause_reason>。
+       完成人工驗收後執行 /continue 繼續下一個 milestone。"
 
 4. Otherwise — keep going. The dispatcher self-coordinates:
    GOTO step 2 (next inner tick in the SAME /continue invocation)
    This covers both phase transitions (PLANNING→ANALYZING→EXECUTING→REPORTING) and
-   consecutive batches within the same phase. There is no artificial batch ceiling —
-   the dispatcher runs as long as it can make progress.
+   consecutive batches within the same phase. There is no artificial batch ceiling
+   and no context-budget guard — the dispatcher runs to a terminal phase or planned
+   pause. If context truly exhausts mid-batch, the session will end abruptly; the
+   next /continue picks up via Step 2 crash recovery.
 ```
 
-**Design intent**: `/continue` is the dispatcher; once it starts it owns coordination until it cannot proceed (terminal phase or genuine context exhaustion). It does not yield mid-progress to ask the user to press a button. The only legitimate reasons to stop are: the goal is done, the team is blocked on a human decision, or the session's context budget is genuinely full.
+**Design intent**: `/continue` autopilots from start to finish. The only legitimate reasons to stop within a session are: (a) the goal is COMPLETE, (b) the team hit AWAITING_HUMAN (blocker), or (c) the planner declared a PauseAfter checkpoint at planning time. Context exhaustion is not a planned stopping point — if it happens, it's a crash, and Step 2 recovery handles it on the next /continue.
 
 ## `report_and_reflect()` — runs once when the goal closes
 
@@ -503,20 +505,20 @@ Reflector is NOT part of the relay. It runs once per goal, after every task reac
 
 ## Dispatcher self-loop principle
 
-**The dispatcher keeps ticking inside a single `/continue` invocation until it cannot proceed.** It does NOT yield back to the user just because some batch counter elapsed. Inner-loop termination is decided by **real conditions**, not arbitrary ceilings:
+**The dispatcher autopilots from start to finish.** It does NOT yield mid-progress except at three legitimate stopping points:
 
 1. **Terminal phase** — `phase ∈ {COMPLETE, AWAITING_HUMAN, IDLE}` → stop. The work is done, blocked on a human, or absent.
-2. **Context exhaustion** — accumulated sub-agent results would overflow the session's context budget → stop. A new `/continue` from the user starts a fresh session that can resume via Step 2 crash-recovery.
+2. **Planned pause** — a milestone validator passed a milestone with `PauseAfter: true`. Soft EXIT; phase stays EXECUTING so the next /continue resumes naturally.
 3. **Crash-retry wait** — a singleton planner is in flight and the dispatcher needs real wall-clock time to elapse before checking again (Step 2 sub-case 0, recent-crash branch) → stop and let the user re-issue `/continue` when ready.
 
-In every other situation — phase transitions, batch completions, even many batches in a row — the dispatcher loops back to Step 2 and picks the next batch within the same invocation. No `ScheduleWakeup`, no artificial batch cap.
+There is no context-budget guard — if the session truly runs out of context mid-batch, the partial state on disk is recovered by Step 2 on the next /continue. In every other situation (phase transitions, batch completions, many consecutive batches) the dispatcher loops back to Step 2 within the same invocation.
 
 ## Exit conditions
 
 - `phase: COMPLETE` — goal achieved.
 - `phase: AWAITING_HUMAN` — blocker (DAG, dependency deadlock, validator escalation, planner-flagged).
 - `phase: IDLE` — no active goal.
-- `[CONTEXT_PAUSE]` — context budget guard tripped. State is preserved (`status: WAITING` in current phase); a fresh `/continue` resumes via crash recovery.
+- `[PLANNED_PAUSE]` — planner declared a PauseAfter checkpoint at this milestone. State is preserved (`phase: EXECUTING`, `status: WAITING`); a fresh `/continue` resumes the next downstream milestone naturally.
 - `[CRASH_WAIT]` — planner singleton recently crashed and we need real time to elapse before retrying. Fresh `/continue` from the user re-checks.
 
 ## What the dispatcher does NOT do
