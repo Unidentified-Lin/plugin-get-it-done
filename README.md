@@ -1,11 +1,11 @@
-# plugin-get-done
+# plugin-get-it-done
 
 Autonomous 5-agent team (Planner, Analyst, Executor, Validator, Reflector) with batch-aware dispatcher for goal-driven development. v2 architecture with heterogeneous parallel execution, milestone-level integration validation, and dual-tier learning system (cross-project A-side + per-project B-side).
 
 ## 🚀 Add this Marketplace
 
 ```shell
-claude plugin marketplace add Unidentified-Lin/plugin-get-done
+claude plugin marketplace add Unidentified-Lin/plugin-get-it-done
 ```
 
 > Marketplace name: `get-it-done`
@@ -25,7 +25,7 @@ claude plugin marketplace add Unidentified-Lin/plugin-get-done
 claude plugin install get-it-done@get-it-done
 
 # Or install directly from the repo
-claude plugin install Unidentified-Lin/plugin-get-done:plugins/get-it-done
+claude plugin install Unidentified-Lin/plugin-get-it-done:plugins/get-it-done
 ```
 
 ## 📁 Repository Structure
