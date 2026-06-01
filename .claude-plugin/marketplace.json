@@ -9,6 +9,11 @@
       "name": "get-it-done",
       "source": "./plugins/get-it-done",
       "description": "Autonomous 5-agent team (Planner, Analyst, Executor, Validator + post-cycle Reflector) with a thin dispatcher (/continue). Main relay: PLANNING → ANALYZING? → EXECUTING ↔ VALIDATING → REPORTING → COMPLETE off project-local state in team/. Reflector runs once post-completion as an independent sub-agent."
+    },
+    {
+      "name": "feature-flow",
+      "source": "./plugins/feature-flow",
+      "description": "Full feature development lifecycle: requirement analysis, progressive planning, task-by-task implementation, and code review."
     }
   ]
 }
