@@ -20,6 +20,9 @@ Extract the goal from the user's message — everything after `/objective`. If e
 
 ## Step 0: Bootstrap
 
+**When to use `/plan` first**: If the requirement is complex or ambiguous (needs interactive scope analysis, design decisions, impact assessment), consider running `/plan` first. `/plan` produces a frozen planning document and initializes `team/` state automatically — you can then run `/continue` directly instead of `/objective`.
+
+**macOS / Linux (Claude Code and GitHub Copilot):**
 ```bash
 : "${CLAUDE_PLUGIN_ROOT:?CLAUDE_PLUGIN_ROOT is not set — refusing to read templates from / }"
 : "${CLAUDE_PLUGIN_DATA:?CLAUDE_PLUGIN_DATA is not set — refusing to write learnings to / }"
@@ -31,6 +34,21 @@ rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team_learnings/" "${
 # B — per-project state + sub-agent scratch surfaces
 mkdir -p team/context team/findings team/workspace
 rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team/" team/
+```
+
+**Windows (GitHub Copilot — PowerShell):**
+```powershell
+# Detect plugin root
+$PLUGIN_ROOT = Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+$PLUGIN_DATA = "$HOME\.copilot\data\get-it-done"
+
+# A — cross-project learnings
+New-Item -ItemType Directory -Path "$PLUGIN_DATA\team_learnings\agent_rules" -Force | Out-Null
+robocopy "$PLUGIN_ROOT\templates\team_learnings" "$PLUGIN_DATA\team_learnings" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
+
+# B — per-project state
+New-Item -ItemType Directory -Path "team\context","team\findings","team\workspace" -Force | Out-Null
+robocopy "$PLUGIN_ROOT\templates\team" "team" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
 ```
 
 `team/workspace/` (per-executor scratch) and `team/findings/` (per-analyst findings) are sub-agent write surfaces — bootstrap only creates the directory; sub-agents fill files.
