@@ -1,6 +1,7 @@
 ---
 name: objective
-description: Sets a new business goal for the autonomous agent team and launches the first dispatcher cycle. Usage: /objective <goal description>. Bootstraps the project's team/ workspace from plugin templates if missing, resets per-goal files, initializes v2 state schema (batch-aware), and starts the planning → execution → validation loop.
+description: >-
+  Sets a new business goal for the autonomous agent team and launches the first dispatcher cycle. Usage: /objective <goal description>. Bootstraps the project's team/ workspace from plugin templates if missing, resets per-goal files, initializes v2 state schema (batch-aware), and starts the planning → execution → validation loop.
 ---
 
 You are executing **/objective**. This is how the user sets a business goal for the autonomous agent team. Both the v2 state schema (batch-aware) and the new agent-return YAML contract live in `team/state.md` — read it after bootstrap if you need to refresh on the shapes.
