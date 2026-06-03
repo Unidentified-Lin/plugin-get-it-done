@@ -3,7 +3,7 @@ name: interactive-planner
 description: >-
   Drives the full interactive planning pipeline (A1 → B1 → B2 → B3 → B4 →
   C1 → C2 → C3) with the user. Invoked by the /plan skill. Produces a frozen
-  planning document, individual task files, and initializes team/ execution
+  planning document, individual task files, and initializes .get-it-done/ execution
   state so /continue can pick up autonomously. Spawns scope-scanner,
   scope-verifier, and plan-reviewer as sub-agents.
 model: claude-opus-4-7
@@ -43,7 +43,7 @@ Follow `planning-guide.md` step by step:
 3. **B2** — Spawn **scope-scanner** for change-scope inventory. After scanner returns, verify `<!-- scope-verifier(B2):` annotation exists in plan doc. If absent, directly spawn scope-verifier yourself. Present scope to user for confirmation.
 4. **B3** — Produce discussion list from B1+B2. Discuss topics one by one. Consolidate decisions into 實作方向重點. User confirms.
 5. **B4** — Spawn **scope-scanner** for impact-scope inventory. Apply same verifier fallback check (`<!-- scope-verifier(B4):`). Present impact to user. User confirms.
-6. **C phase** — Follow `task-breakdown-guide.md` for C1 (framework), C2 (fill each task), C3 (confirm, freeze, and initialize team/ state).
+6. **C phase** — Follow `task-breakdown-guide.md` for C1 (framework), C2 (fill each task), C3 (confirm, freeze, and initialize .get-it-done/ state).
 
 ## Spawning Sub-Agents
 
@@ -60,12 +60,12 @@ Always pass all reference file **absolute paths** in the sub-agent prompt.
 
 After plan-reviewer passes the frozen document, follow `task-breakdown-guide.md` C3 section to:
 1. Update planning document status to `已凍結，進入執行`
-2. Bootstrap `team/` if needed (platform-adapter.md Section 7)
-3. Write `team/goal.md`
-4. Write `team/state.md` YAML block with `phase: EXECUTING`
-5. Write `team/task_queue.md` with tasks in v2 DAG format **including the `## Milestones` section**
-6. Write `team/metrics.md` with acceptance criteria for each task
-7. Append `[/PLAN_COMPLETE]` to `team/progress_log.md`
+2. Bootstrap `.get-it-done/` if needed (platform-adapter.md Section 7)
+3. Write `.get-it-done/goal.md`
+4. Write `.get-it-done/state.md` YAML block with `phase: EXECUTING`
+5. Write `.get-it-done/task_queue.md` with tasks in v2 DAG format **including the `## Milestones` section**
+6. Write `.get-it-done/metrics.md` with acceptance criteria for each task
+7. Append `[/PLAN_COMPLETE]` to `.get-it-done/progress_log.md`
 8. Tell the user to run `/continue`
 
 ## Hard Rules
@@ -82,5 +82,5 @@ After plan-reviewer passes the frozen document, follow `task-breakdown-guide.md`
 - **Verifier Fallback Protocol**: After scanner returns, grep plan doc for the matching `<!-- scope-verifier(B2):` or `<!-- scope-verifier(B4):` annotation. If absent, directly spawn scope-verifier yourself.
 - **B phase gate**: Do not enter C phase until B4 is confirmed by the user.
 - **Do not proceed past C3** without spawning plan-reviewer.
-- **team/task_queue.md MUST include** both the task entries AND the `## Milestones` section.
-- **team/metrics.md MUST be written** — validators reference it for acceptance criteria by stable ID.
+- **.get-it-done/task_queue.md MUST include** both the task entries AND the `## Milestones` section.
+- **.get-it-done/metrics.md MUST be written** — validators reference it for acceptance criteria by stable ID.

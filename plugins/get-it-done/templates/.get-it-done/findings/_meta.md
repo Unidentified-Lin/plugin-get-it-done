@@ -1,10 +1,10 @@
 # Findings directory
 
-_One file per research request: `team/findings/<req_id>.md`._
+_One file per research request: `.get-it-done/findings/<req_id>.md`._
 
 Owned by individual Analyst sub-agents. Each Analyst writes exactly one file matching the `req_id` it was assigned in its spawn prompt. No file in this directory is shared between Analysts — there is no cross-Analyst write contention by design.
 
-Planner reads every `team/findings/RQ-*.md` whose corresponding entry in `team/research_requests.md` is still `Status: open`. Stale findings (older `RQ-` IDs from a previous goal) are cleared by `/objective` when a new goal is set.
+Planner reads every `.get-it-done/findings/RQ-*.md` whose corresponding entry in `.get-it-done/research_requests.md` is still `Status: open`. Stale findings (older `RQ-` IDs from a previous goal) are cleared by `/objective` when a new goal is set.
 
 ## Per-finding schema
 

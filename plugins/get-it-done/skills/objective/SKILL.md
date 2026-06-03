@@ -1,16 +1,16 @@
 ---
 name: objective
 description: >-
-  Sets a new business goal for the autonomous agent team and launches the first dispatcher cycle. Usage: /objective <goal description>. Bootstraps the project's team/ workspace from plugin templates if missing, resets per-goal files, initializes v2 state schema (batch-aware), and starts the planning → execution → validation loop.
+  Sets a new business goal for the autonomous agent team and launches the first dispatcher cycle. Usage: /objective <goal description>. Bootstraps the project's .get-it-done/ workspace from plugin templates if missing, resets per-goal files, initializes v2 state schema (batch-aware), and starts the planning → execution → validation loop.
 ---
 
-You are executing **/objective**. This is how the user sets a business goal for the autonomous agent team. Both the v2 state schema (batch-aware) and the new agent-return YAML contract live in `team/state.md` — read it after bootstrap if you need to refresh on the shapes.
+You are executing **/objective**. This is how the user sets a business goal for the autonomous agent team. Both the v2 state schema (batch-aware) and the new agent-return YAML contract live in `.get-it-done/state.md` — read it after bootstrap if you need to refresh on the shapes.
 
 ## Where state lives
 
 | Path | Resolves to | Scope | Purpose |
 |---|---|---|---|
-| `team/...` | `<project>/team/...` | **per-project**, in git | Runtime state + per-project learnings (B) |
+| `.get-it-done/...` | `<project>/.get-it-done/...` | **per-project**, in git | Runtime state + per-project learnings (B) |
 | `${CLAUDE_PLUGIN_DATA}/team_learnings/...` | `~/.claude/plugins/data/get-it-done-<scope>/team_learnings/...` | **per-user, cross-project** | Cross-project agent-team learnings (A) |
 
 The plugin install dir (`${CLAUDE_PLUGIN_ROOT}`) is read-only — templates only.
@@ -21,7 +21,7 @@ Extract the goal from the user's message — everything after `/objective`. If e
 
 ## Step 0: Bootstrap
 
-**When to use `/plan` first**: If the requirement is complex or ambiguous (needs interactive scope analysis, design decisions, impact assessment), consider running `/plan` first. `/plan` produces a frozen planning document and initializes `team/` state automatically — you can then run `/continue` directly instead of `/objective`.
+**When to use `/plan` first**: If the requirement is complex or ambiguous (needs interactive scope analysis, design decisions, impact assessment), consider running `/plan` first. `/plan` produces a frozen planning document and initializes `.get-it-done/` state automatically — you can then run `/continue` directly instead of `/objective`.
 
 **macOS / Linux (Claude Code and GitHub Copilot):**
 ```bash
@@ -33,8 +33,8 @@ mkdir -p "${CLAUDE_PLUGIN_DATA}/team_learnings/agent_rules"
 rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team_learnings/" "${CLAUDE_PLUGIN_DATA}/team_learnings/"
 
 # B — per-project state + sub-agent scratch surfaces
-mkdir -p team/context team/findings team/workspace
-rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team/" team/
+mkdir -p .get-it-done/context .get-it-done/findings .get-it-done/workspace
+rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" .get-it-done/
 ```
 
 **Windows (GitHub Copilot — PowerShell):**
@@ -48,15 +48,15 @@ New-Item -ItemType Directory -Path "$PLUGIN_DATA\team_learnings\agent_rules" -Fo
 robocopy "$PLUGIN_ROOT\templates\team_learnings" "$PLUGIN_DATA\team_learnings" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
 
 # B — per-project state
-New-Item -ItemType Directory -Path "team\context","team\findings","team\workspace" -Force | Out-Null
-robocopy "$PLUGIN_ROOT\templates\team" "team" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
+New-Item -ItemType Directory -Path ".get-it-done\context",".get-it-done\findings",".get-it-done\workspace" -Force | Out-Null
+robocopy "$PLUGIN_ROOT\templates\.get-it-done" ".get-it-done" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
 ```
 
-`team/workspace/` (per-executor scratch) and `team/findings/` (per-analyst findings) are sub-agent write surfaces — bootstrap only creates the directory; sub-agents fill files.
+`.get-it-done/workspace/` (per-executor scratch) and `.get-it-done/findings/` (per-analyst findings) are sub-agent write surfaces — bootstrap only creates the directory; sub-agents fill files.
 
 ## Step 1: Check for an active goal
 
-Read `team/state.md`. If `goal_set: true` and `phase` is not `IDLE` or `COMPLETE`, ask:
+Read `.get-it-done/state.md`. If `goal_set: true` and `phase` is not `IDLE` or `COMPLETE`, ask:
 
 > "已有一個進行中的目標。要取代它（從頭開始）還是保留它（取消此命令）？"
 
@@ -66,7 +66,7 @@ If the file is pre-v2 (no `schema_version` or `schema_version < 2`), treat the p
 
 ## Step 2: Reset team state (v2 schema)
 
-Overwrite the YAML block at the top of `team/state.md` (preserve everything below it — the State Machine docs, Phase Definitions, Transition Rules, batch lifecycle, agent-return contract):
+Overwrite the YAML block at the top of `.get-it-done/state.md` (preserve everything below it — the State Machine docs, Phase Definitions, Transition Rules, batch lifecycle, agent-return contract):
 
 ```yaml
 schema_version: 2
@@ -84,7 +84,7 @@ Also remove any leftover `## Batch <id>` blocks (or legacy `## Handoff` blocks) 
 
 ## Step 3: Write the goal
 
-Overwrite `team/goal.md`:
+Overwrite `.get-it-done/goal.md`:
 
 ```markdown
 # Active Goal
@@ -114,29 +114,29 @@ Overwrite per-goal scaffold files with explicit `cp -f` commands (ensures no sta
 
 ```bash
 # (1) Overwrite per-goal scaffolds from templates
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/team/task_queue.md" team/task_queue.md
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/team/metrics.md" team/metrics.md
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/team/research_requests.md" team/research_requests.md
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/team/findings/_meta.md" team/findings/_meta.md
+cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/task_queue.md" .get-it-done/task_queue.md
+cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/metrics.md" .get-it-done/metrics.md
+cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/research_requests.md" .get-it-done/research_requests.md
+cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/findings/_meta.md" .get-it-done/findings/_meta.md
 
 # (2) Clear leftover per-request findings files from prior goal
-find team/findings -type f -name 'RQ-*.md' -delete
+find .get-it-done/findings -type f -name 'RQ-*.md' -delete
 
 # (3) Clear executor scratch workspace (remove stale prior-goal artifacts)
-rm -rf team/workspace
-mkdir -p team/workspace
+rm -rf .get-it-done/workspace
+mkdir -p .get-it-done/workspace
 
-# (4) Remove stale team/prd.md (planner writes fresh when needed)
-rm -f team/prd.md
+# (4) Remove stale .get-it-done/prd.md (planner writes fresh when needed)
+rm -f .get-it-done/prd.md
 ```
 
 **Do NOT overwrite** (these accumulate across goals and are preserved):
-- `team/progress_log.md` (append-only history)
-- `team/validation_log.md` (append-only history)
-- `team/context/*` (per-project domain/tech/codebase/decisions/stakeholder — B side)
+- `.get-it-done/progress_log.md` (append-only history)
+- `.get-it-done/validation_log.md` (append-only history)
+- `.get-it-done/context/*` (per-project domain/tech/codebase/decisions/stakeholder — B side)
 - everything under `${CLAUDE_PLUGIN_DATA}/team_learnings/` (A side, untouched by /objective)
 
-Append to `team/progress_log.md`:
+Append to `.get-it-done/progress_log.md`:
 
 ```
 <ISO timestamp> [NEW_GOAL] <first 100 chars of goal>

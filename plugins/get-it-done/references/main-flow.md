@@ -15,7 +15,7 @@ Interactive Path                    Autonomous Path
   ▼                                   ▼
 A–C (planning)                      PLANNING phase
   │                                 (planner agent)
-  │ team/ initialized                 │
+  │ .get-it-done/ initialized                 │
   ▼                                   ▼
 /continue ←─────────────────────── EXECUTING phase
   │                                 (dispatcher loop)
@@ -64,13 +64,13 @@ C. Task Breakdown
    C1. User confirms task framework ←── Loop ⑥
    C2. Surgical codebase investigation, fill each task
    C3. User confirms task list → plan-reviewer audits 📋
-        ├─ PASS → freeze + initialize team/ state → /continue
+        ├─ PASS → freeze + initialize .get-it-done/ state → /continue
         ├─ Return to C2 (task details)
         ├─ Return to B3 (solution direction)
         └─ Return to B1 (requirements)
         │
         ▼
-   team/task_queue.md + team/metrics.md + team/state.md (EXECUTING)
+   .get-it-done/task_queue.md + .get-it-done/metrics.md + .get-it-done/state.md (EXECUTING)
         │
         ▼
 /continue (autonomous dispatcher)

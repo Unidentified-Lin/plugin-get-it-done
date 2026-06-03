@@ -22,7 +22,7 @@ _Updated by Reflector. Read by Validator at the start of every run._
 **Reason**: Premature escalation strands work behind human review; late escalation burns tokens on a non-converging loop. The three criteria split the difference using observable signal in the task history.
 
 ### VR-005 | Priority: medium
-**Rule**: When metrics.md is silent on a behavioral detail and `team/prd.md` exists with a relevant `PRD-Ref:`, treat the PRD's Functional Requirements / Data Model / Edge Cases sections as the clarifier. But never pass or fail on PRD content that no metric covers — the metrics' binary criteria are the only judges. If the PRD demands something the metrics don't, the gap is a Planner problem (raise it via `fail_reasons` referencing the missing criterion, not the present PRD line).
+**Rule**: When metrics.md is silent on a behavioral detail and `.get-it-done/prd.md` exists with a relevant `PRD-Ref:`, treat the PRD's Functional Requirements / Data Model / Edge Cases sections as the clarifier. But never pass or fail on PRD content that no metric covers — the metrics' binary criteria are the only judges. If the PRD demands something the metrics don't, the gap is a Planner problem (raise it via `fail_reasons` referencing the missing criterion, not the present PRD line).
 **Reason**: PRD scope creep into validation produces unreproducible pass/fail outcomes and undermines the planner→validator contract.
 
 ### VR-006 | Priority: high

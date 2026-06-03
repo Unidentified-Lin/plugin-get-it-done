@@ -1,6 +1,6 @@
 # Team State
 
-_Schema version 2 — batch-aware. The dispatcher (main session, via `/continue`) owns all writes to this file. Sub-agents MUST NOT edit `team/state.md`._
+_Schema version 2 — batch-aware. The dispatcher (main session, via `/continue`) owns all writes to this file. Sub-agents MUST NOT edit `.get-it-done/state.md`._
 
 ## State Machine
 
@@ -22,7 +22,7 @@ last_updated: null           # ISO timestamp — set whenever dispatcher rewrite
 - role: executor             # executor | validator | analyst | planner | reflector
   mode: null                 # validators: task | milestone (Stage 3+); others: null
   task_id: T-007             # task ID, milestone ID (e.g. M2), or req_id (analyst) — null for planner
-  scratch: team/workspace/exec-T-007/    # executor-only; validator/analyst/planner: null
+  scratch: .get-it-done/workspace/exec-T-007/    # executor-only; validator/analyst/planner: null
   started_at: 2026-05-23T15:04:11Z
 ```
 
@@ -108,7 +108,7 @@ Every sub-agent (executor / validator / analyst — and planner when spawned by 
 role: executor                    # executor | validator | analyst | planner
 task_id: T-007                    # executor: T-XXX; validator: T-XXX or M-XXX; analyst: omit (use req_id instead); planner: omit
 status: completed                 # completed | failed | needs_clarification
-artifact: team/workspace/exec-T-007/result.md   # path written by this sub-agent; "" if none
+artifact: .get-it-done/workspace/exec-T-007/result.md   # path written by this sub-agent; "" if none
 notes: 一句到三句話的人類可讀摘要               # short; long prose belongs in the artifact
 
 # validator-only fields:
@@ -139,7 +139,7 @@ Each completed batch appends:
 
 ```markdown
 ## Batch B0007 — 2026-05-23T15:04:11Z → 2026-05-23T15:06:42Z
-- executor T-007 → completed, artifact: team/workspace/exec-T-007/result.md
+- executor T-007 → completed, artifact: .get-it-done/workspace/exec-T-007/result.md
 next_phase: EXECUTING
 intent: spawn validator T-007 next tick.
 ```

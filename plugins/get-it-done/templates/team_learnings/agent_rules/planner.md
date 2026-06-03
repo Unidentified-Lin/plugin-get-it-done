@@ -34,7 +34,7 @@ _Updated by Reflector. Read by Planner at the start of every run._
 **Reason**: Schema changes are high-risk for silent breakage of legacy data; a worked round-trip example forecloses the entire "does this still parse?" review question class.
 
 ### PR-008 | Priority: high
-**Rule**: When the goal describes a deliverable product / system / tool / platform / service / application whose feature boundary is NOT exhaustively enumerated by the user, Planner MUST first produce `team/prd.md` containing all 13 sections specified in planner.md ("PRD generation (when needed)"), pass the `## Self-Audit` checklist, and only then write `task_queue.md` and `metrics.md`. Every task must populate `PRD-Ref:` pointing back to the PRD section(s) it implements.
+**Rule**: When the goal describes a deliverable product / system / tool / platform / service / application whose feature boundary is NOT exhaustively enumerated by the user, Planner MUST first produce `.get-it-done/prd.md` containing all 13 sections specified in planner.md ("PRD generation (when needed)"), pass the `## Self-Audit` checklist, and only then write `task_queue.md` and `metrics.md`. Every task must populate `PRD-Ref:` pointing back to the PRD section(s) it implements.
 **Reason**: Abstract product goals decomposed directly into tasks consistently cover only the few features the user named and miss the industry-standard Must-Have set — the result is a POC, not a complete tool. The PRD step forces an exhaustive feature inventory before task creation.
 
 ### PR-009 | Priority: medium
@@ -42,7 +42,7 @@ _Updated by Reflector. Read by Planner at the start of every run._
 **Reason**: A Planner without domain knowledge produces a subjectively short Must-Have list — the root cause of POC-level planning. Empirical grounding from comparable products closes this gap.
 
 ### PR-010 | Priority: high
-**Rule**: Before emitting the agent-return, self-check the DAG in `team/task_queue.md`: every `Dependencies:` ID must exist as a `### T-XXX:` heading in the same file; no task may reference itself; the dependency graph must be acyclic (mentally topo-sort it — if you can't order tasks, there is a cycle). Fix violations before terminating. The dispatcher runs the same check defensively; failing it costs a tick and falls phase back to PLANNING.
+**Rule**: Before emitting the agent-return, self-check the DAG in `.get-it-done/task_queue.md`: every `Dependencies:` ID must exist as a `### T-XXX:` heading in the same file; no task may reference itself; the dependency graph must be acyclic (mentally topo-sort it — if you can't order tasks, there is a cycle). Fix violations before terminating. The dispatcher runs the same check defensively; failing it costs a tick and falls phase back to PLANNING.
 **Reason**: v2 dispatch is dependency-driven; orphan or cyclic deps stall the entire goal until human intervention.
 
 ### PR-011 | Priority: high
@@ -50,7 +50,7 @@ _Updated by Reflector. Read by Planner at the start of every run._
 **Reason**: Defensive dependencies silently serialize parallelizable work; in Stage 2+ this is the dominant cause of throughput regression.
 
 ### PR-012 | Priority: medium
-**Rule**: When requesting research, each `RQ-X` entry in `team/research_requests.md` must be independent of every other open `RQ-`. Interdependent questions (RQ-2 needs RQ-1's answer to even be answerable) MUST be sequenced across two planner→analyst rounds, not batched. Independence is the precondition for parallel Analyst spawn in Stage 4+.
+**Rule**: When requesting research, each `RQ-X` entry in `.get-it-done/research_requests.md` must be independent of every other open `RQ-`. Interdependent questions (RQ-2 needs RQ-1's answer to even be answerable) MUST be sequenced across two planner→analyst rounds, not batched. Independence is the precondition for parallel Analyst spawn in Stage 4+.
 **Reason**: Parallel Analyst spawn assumes per-request independence; coupling them re-creates the serial bottleneck and forces a re-plan after each Analyst returns.
 
 ### PR-013 | Priority: high
@@ -66,7 +66,7 @@ _Updated by Reflector. Read by Planner at the start of every run._
 **Reason**: Structural failures require human judgment about whether the goal's decomposition is fundamentally flawed or just needs reshaping. Dispatcher escalates immediately to preserve diagnostic evidence; human makes the call rather than relying on planner rules.
 
 ### PR-016 | Priority: high
-**Rule**: When you re-run after ANALYZING and any incoming `team/findings/RQ-X.md` carries `Confidence: low` on a finding that would be **load-bearing** for the PRD or task decomposition (i.e. you would build Must-Have features, NFRs, or task acceptance criteria on top of that finding), do NOT proceed to EXECUTING by treating the weak finding as fact. Either: (a) open a follow-up `RQ-` in `team/research_requests.md` with a sharper question that targets the gap, then emit `next_phase_request: ANALYZING` to re-run Analyst; or (b) explicitly scope the PRD / task list down so the weak finding is no longer load-bearing (e.g. mark the affected feature as Should-Have or Out-of-Scope) and document the deferment in PRD §12. Confidence-low findings on incidental context (color choices, naming preferences, etc.) are fine to use as-is.
+**Rule**: When you re-run after ANALYZING and any incoming `.get-it-done/findings/RQ-X.md` carries `Confidence: low` on a finding that would be **load-bearing** for the PRD or task decomposition (i.e. you would build Must-Have features, NFRs, or task acceptance criteria on top of that finding), do NOT proceed to EXECUTING by treating the weak finding as fact. Either: (a) open a follow-up `RQ-` in `.get-it-done/research_requests.md` with a sharper question that targets the gap, then emit `next_phase_request: ANALYZING` to re-run Analyst; or (b) explicitly scope the PRD / task list down so the weak finding is no longer load-bearing (e.g. mark the affected feature as Should-Have or Out-of-Scope) and document the deferment in PRD §12. Confidence-low findings on incidental context (color choices, naming preferences, etc.) are fine to use as-is.
 **Reason**: AR-005 makes analysts mark gaps explicitly; this rule closes the loop by ensuring Planner notices. Without it, the AR-005 signal is wasted — Planner builds tasks on phantom findings, executors implement them, validators pass them per criteria, and the gap surfaces only at milestone validation or after goal completion as integration failures.
 
 ### PR-017 | Priority: high

@@ -4,7 +4,7 @@ description: >-
   Analyzes requirements and produces a progressive planning document covering
   scope definition, requirements clarification, solution proposals, and task
   breakdown (A+B+C pipeline). At the end of planning (C3), also initializes
-  team/task_queue.md in get-it-done format so /continue can execute the plan
+  .get-it-done/task_queue.md in get-it-done format so /continue can execute the plan
   autonomously. Use when starting a new feature, analyzing a requirement, or
   producing a plan before implementation.
 
@@ -64,10 +64,10 @@ After the user confirms the task list and plan-reviewer passes, the planner must
 
 1. Mark the planning document status as `已凍結，進入執行`
 2. **Initialize get-it-done execution state** (see `task-breakdown-guide.md` C3 section):
-   - Bootstrap `team/` if not already present
-   - Write `team/goal.md` with the feature description
-   - Write `team/task_queue.md` with tasks in v2 DAG format
-   - Write `team/state.md` YAML block with `phase: EXECUTING`
+   - Bootstrap `.get-it-done/` if not already present
+   - Write `.get-it-done/goal.md` with the feature description
+   - Write `.get-it-done/task_queue.md` with tasks in v2 DAG format
+   - Write `.get-it-done/state.md` YAML block with `phase: EXECUTING`
 3. Tell the user: "規劃完成，執行 `/continue` 開始自主執行"
 
 ## Key Rules
@@ -77,7 +77,7 @@ After the user confirms the task list and plan-reviewer passes, the planner must
 - **Ticket systems**: read work item body + acceptance criteria only. Never write back.
 - **File path verification**: verify every path exists via `glob`/`grep` before writing into task definitions.
 - **Every task must have**: concrete file paths, actionable steps (function-level), verification method, and test flag.
-- **Freeze**: mark document status `已凍結，進入執行`; initialize team/ state; tell the user to run `/continue`.
+- **Freeze**: mark document status `已凍結，進入執行`; initialize .get-it-done/ state; tell the user to run `/continue`.
 - **Scanner/verifier loop limit**: Maximum 3 scanner↔verifier loops per invocation. If exceeded → escalate to user.
 
 ## Sub-agents spawned
@@ -91,4 +91,4 @@ After the user confirms the task list and plan-reviewer passes, the planner must
 
 ## Output
 
-A planning document at `{project-root}/docs/plans/{xxx}-plan/{xxx}-plan.md` with individual task files in `tasks/`, plus an initialized `team/` directory ready for `/continue`.
+A planning document at `{project-root}/docs/plans/{xxx}-plan/{xxx}-plan.md` with individual task files in `tasks/`, plus an initialized `.get-it-done/` directory ready for `/continue`.

@@ -3,15 +3,15 @@ name: continue
 description: Continue the autonomous agent team's work on the active goal. Runs the batch-aware dispatcher inner loop — picks up to N actionable work items (executors, validators, analysts, milestone validators, rework), spawns them in parallel via the Agent tool, persists results, and repeats until phase ∈ {COMPLETE, AWAITING_HUMAN, IDLE}. Usage:/continue (no arguments).
 ---
 
-You are executing **/continue** — the **batch-aware dispatcher** for the autonomous agent team. You are the only writer of shared state files (`team/state.md`, `team/task_queue.md`, `team/research_requests.md`, `team/progress_log.md`, `team/validation_log.md`). Sub-agents emit a structured `---agent-return---` YAML block; you parse it and persist the changes.
+You are executing **/continue** — the **batch-aware dispatcher** for the autonomous agent team. You are the only writer of shared state files (`.get-it-done/state.md`, `.get-it-done/task_queue.md`, `.get-it-done/research_requests.md`, `.get-it-done/progress_log.md`, `.get-it-done/validation_log.md`). Sub-agents emit a structured `---agent-return---` YAML block; you parse it and persist the changes.
 
 **Parallelism**: fan-out cap is **N = 5** per batch.
 - **EXECUTING** batches are heterogeneous — may mix per-task validators, milestone validators, reworks, and new executors.
-- **ANALYZING** batches are homogeneous (all analysts) — one analyst per open RQ, up to N. Planner's `research_requests.md` is the source of truth; each analyst writes its own `team/findings/RQ-X.md`, so per-analyst writes are disjoint by design.
+- **ANALYZING** batches are homogeneous (all analysts) — one analyst per open RQ, up to N. Planner's `research_requests.md` is the source of truth; each analyst writes its own `.get-it-done/findings/RQ-X.md`, so per-analyst writes are disjoint by design.
 - **PLANNING** remains N=1 (planner is a singleton role).
 Milestone validators gate downstream milestones: a task in milestone `M_k` cannot start until every `M_1..M_{k-1}` has been milestone-validated.
 
-All state lives under `team/` in the **project's working directory** (the user's repo, NOT the plugin install directory). Spawnable sub-agents: `planner`, `analyst`, `executor`, `validator`, `reflector`. Fall back to `get-it-done:<name>` only on a bare-name collision.
+All state lives under `.get-it-done/` in the **project's working directory** (the user's repo, NOT the plugin install directory). Spawnable sub-agents: `planner`, `analyst`, `executor`, `validator`, `reflector`. Fall back to `get-it-done:<name>` only on a bare-name collision.
 
 ## Step 0: Bootstrap (defensive, idempotent)
 
@@ -24,19 +24,19 @@ mkdir -p "${CLAUDE_PLUGIN_DATA}/team_learnings/agent_rules"
 rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team_learnings/" "${CLAUDE_PLUGIN_DATA}/team_learnings/"
 
 # B — per-project state + scratch workspace
-mkdir -p team/context team/findings team/workspace
-rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team/" team/
+mkdir -p .get-it-done/context .get-it-done/findings .get-it-done/workspace
+rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" .get-it-done/
 ```
 
-`team/workspace/` (per-sub-agent scratch) and `team/findings/` (per-research-request findings) are sub-agent-owned write surfaces; the dispatcher creates the directories but never writes inside them.
+`.get-it-done/workspace/` (per-sub-agent scratch) and `.get-it-done/findings/` (per-research-request findings) are sub-agent-owned write surfaces; the dispatcher creates the directories but never writes inside them.
 
-If `team/state.md` is missing after bootstrap, abort with an error.
+If `.get-it-done/state.md` is missing after bootstrap, abort with an error.
 
 ## Step 1: Schema version check
 
-Read the YAML block at the top of `team/state.md`. If `schema_version` is missing or `< 2`, this is a pre-v2 file from an older plugin version:
+Read the YAML block at the top of `.get-it-done/state.md`. If `schema_version` is missing or `< 2`, this is a pre-v2 file from an older plugin version:
 
-> "team/state.md 使用舊 schema。執行 `/objective <goal>` 來重設為 v2（這會保留 progress_log、validation_log、context/ 和 A-side learnings）。"
+> ".get-it-done/state.md 使用舊 schema。執行 `/objective <goal>` 來重設為 v2（這會保留 progress_log、validation_log、context/ 和 A-side learnings）。"
 
 Then exit.
 
@@ -119,19 +119,19 @@ ELSE:
     proceed to step 3
 ```
 
-This split closes the validator-rerun edge case automatically — sub-case B never re-spawns a validator whose verdict already landed in `validation_log.md`, so the `(task_id, attempt_no)` dedup never has to arbitrate two different verdicts on the same attempt. Re-spawn (sub-case A) is safe by the idempotency rules in `team/state.md` (executor scratch dir keyed by task_id; Attempts not yet incremented; validation_log dedup on `(task_id, attempt_no)` / `(milestone_id, attempt_no)`; analyst writes to a per-RQ file `team/findings/RQ-X.md` that overwrites cleanly on re-run because `Status: open` still holds — a fulfilled RQ is never re-spawned).
+This split closes the validator-rerun edge case automatically — sub-case B never re-spawns a validator whose verdict already landed in `validation_log.md`, so the `(task_id, attempt_no)` dedup never has to arbitrate two different verdicts on the same attempt. Re-spawn (sub-case A) is safe by the idempotency rules in `.get-it-done/state.md` (executor scratch dir keyed by task_id; Attempts not yet incremented; validation_log dedup on `(task_id, attempt_no)` / `(milestone_id, attempt_no)`; analyst writes to a per-RQ file `.get-it-done/findings/RQ-X.md` that overwrites cleanly on re-run because `Status: open` still holds — a fulfilled RQ is never re-spawned).
 
 ## Step 3: Truncate-check (no archive folder — direct truncation)
 
-- `wc -l team/progress_log.md > 400` → keep last 200 lines; append `<ISO> [TRUNCATE] progress_log.md from N to 200`.
-- `wc -l team/validation_log.md > 500` → keep last 250 lines; append `<ISO> [TRUNCATE] validation_log.md from N to 250`.
+- `wc -l .get-it-done/progress_log.md > 400` → keep last 200 lines; append `<ISO> [TRUNCATE] progress_log.md from N to 200`.
+- `wc -l .get-it-done/validation_log.md > 500` → keep last 250 lines; append `<ISO> [TRUNCATE] validation_log.md from N to 250`.
 - A-side patterns.md > 200 lines: defer to Reflector — do NOT auto-truncate.
 
 Idempotent — no edits if under the caps.
 
 ## Step 4: DAG pre-check
 
-If `phase ∈ {EXECUTING, REPORTING}` AND `team/task_queue.md` has any task entries, run:
+If `phase ∈ {EXECUTING, REPORTING}` AND `.get-it-done/task_queue.md` has any task entries, run:
 
 ```
 all_ids := every "### <ID>:" heading in task_queue.md
@@ -173,7 +173,7 @@ PHASE_BRANCH_PLANNING:
     IF phase == ANALYZING:
         # Stage 4: parallel analysts, one per open RQ, up to N_MAX.
         # PR-012 guarantees the open RQs are independent of each other (planner enforces).
-        open_rqs := every entry in team/research_requests.md with Status: open AND Claimed_by == null,
+        open_rqs := every entry in .get-it-done/research_requests.md with Status: open AND Claimed_by == null,
                     ordered by RQ-id ascending
         IF open_rqs is empty:
             # Two sub-cases:
@@ -234,7 +234,7 @@ PHASE_BRANCH_EXECUTING:
                 continue (skip)
         
         pool.append({ role: executor, task_id: t.id,
-                      scratch: "team/workspace/exec-" + t.id + "/" })
+                      scratch: ".get-it-done/workspace/exec-" + t.id + "/" })
         IF t.Touches exists AND non-empty:
             source_touching_executors.append({ task_id: t.id, Touches: t.Touches })
 
@@ -256,7 +256,7 @@ PHASE_BRANCH_EXECUTING:
                 continue (skip)
         
         pool.append({ role: executor, task_id: t.id,
-                      scratch: "team/workspace/exec-" + t.id + "/" })
+                      scratch: ".get-it-done/workspace/exec-" + t.id + "/" })
         IF t.Touches exists AND non-empty:
             source_touching_executors.append({ task_id: t.id, Touches: t.Touches })
 
@@ -285,7 +285,7 @@ The batch is allowed to mix roles because every work item writes to a **disjoint
 |---|---|---|
 | Per-task validator | none (verdict in agent-return only) | none |
 | Milestone validator | none (verdict in agent-return only) | none |
-| Executor (any task) | `team/workspace/exec-<task_id>/` — task-id-keyed | none vs peers in the same batch |
+| Executor (any task) | `.get-it-done/workspace/exec-<task_id>/` — task-id-keyed | none vs peers in the same batch |
 | Project-source-touching executor | project source paths declared in the task description | guarded by **PR-013** in planner rules: tasks with overlapping source paths MUST be made DAG-dependent so they never co-occur in the same batch. Validators don't write to project source. |
 
 Order within the pool is **priority**, not arbitrary — validators come first so executed tasks unblock downstream pendings ASAP, then milestone validators (closing milestones unblocks the next milestone's pool), then reworks (converge stalled loops), then new pendings. Stage 3 still cannot peek ahead to see what would maximize total throughput across multiple ticks; this is a greedy, single-tick scheduler.
@@ -314,10 +314,10 @@ Rewrite state.md YAML block (preserving everything below the block):
 
 Then for **every** item in `batch` (do all claims atomically inside one task_queue.md rewrite — multiple Edit calls in the same assistant turn before the spawn message is fine, but they MUST all complete before Step 7):
 
-- `executor` item: set the task's `Claimed_by: exec-<task_id>`, `Claimed_at: <ISO now>`, `Status: claimed`. Do NOT touch `Attempts` yet. Ensure `team/workspace/exec-<task_id>/` exists.
+- `executor` item: set the task's `Claimed_by: exec-<task_id>`, `Claimed_at: <ISO now>`, `Status: claimed`. Do NOT touch `Attempts` yet. Ensure `.get-it-done/workspace/exec-<task_id>/` exists.
 - `validator` item with `mode: task`: set the task's `Claimed_by: val-<task_id>`, `Claimed_at: <ISO now>`, `Status: validating`.
 - `validator` item with `mode: milestone`: in the `## Milestones` section of task_queue.md, set the milestone's `Claimed_by: mval-<milestone_id>`, `Claimed_at: <ISO now>`. The tasks inside the milestone keep their `Status: done` — milestone-mode validation does NOT touch per-task status fields directly (Step 9 may flip them to needs_rework based on `task_ids_to_rework` in the agent-return). The milestone has no persisted `Status:` field; derivation in Step 5 will see `Claimed_by != null` and return `"validating"`.
-- `analyst` item: in `team/research_requests.md`, set the matching RQ entry's `Claimed_by: analyst-<RQ-id>`, `Claimed_at: <ISO now>`. Leave `Status: open` (it flips to `fulfilled` on persist in Step 9). Do all RQ claims in the same rewrite as the state.md atomic pre-write.
+- `analyst` item: in `.get-it-done/research_requests.md`, set the matching RQ entry's `Claimed_by: analyst-<RQ-id>`, `Claimed_at: <ISO now>`. Leave `Status: open` (it flips to `fulfilled` on persist in Step 9). Do all RQ claims in the same rewrite as the state.md atomic pre-write.
 - `planner` item: no task_queue change.
 
 Heterogeneous batches are normal in Stage 3 — mixed roles in `batch` are expected.
@@ -337,14 +337,14 @@ Inputs for this run:
   batch_id: <batch_id>
 
 Read your declared inputs, perform your work, write your artifacts to the paths listed in your
-role definition (executor → scratch dir; analyst → team/findings/<req_id>.md; planner →
-team/prd.md / team/task_queue.md / team/metrics.md / team/research_requests.md as appropriate;
+role definition (executor → scratch dir; analyst → .get-it-done/findings/<req_id>.md; planner →
+.get-it-done/prd.md / .get-it-done/task_queue.md / .get-it-done/metrics.md / .get-it-done/research_requests.md as appropriate;
 validator → no artifact).
 
 Terminate by emitting exactly one fenced `---agent-return---` YAML block at the end of your
-output, conforming to the contract in team/state.md ("Agent-return YAML contract").
+output, conforming to the contract in .get-it-done/state.md ("Agent-return YAML contract").
 
-DO NOT edit team/state.md, team/progress_log.md, or team/validation_log.md.
+DO NOT edit .get-it-done/state.md, .get-it-done/progress_log.md, or .get-it-done/validation_log.md.
 DO NOT read other sub-agents' scratch dirs or findings files even if you can see them in your
 filesystem — they belong to peers running concurrently in this same batch.
 The dispatcher persists shared state based on your agent-return.
@@ -385,7 +385,7 @@ BAD_RETURN handling:
 
 A BAD_RETURN from one item does NOT abort the rest of the batch — every well-formed return is still persisted in Step 9. The bad item's task simply reverts to its pre-claim Status (`pending`, `needs_rework`, or `executed`) and the next tick will re-spawn it.
 
-**Agent contract note**: Agents MUST output the `---agent-return---` block at the **end** of their response, exactly as documented in `team/state.md`. This is the ONLY field the dispatcher reads; all analysis and reasoning must be written to artifact files, not to stdout.
+**Agent contract note**: Agents MUST output the `---agent-return---` block at the **end** of their response, exactly as documented in `.get-it-done/state.md`. This is the ONLY field the dispatcher reads; all analysis and reasoning must be written to artifact files, not to stdout.
 
 ## Step 9: Persist the batch results
 
@@ -401,7 +401,7 @@ For each well-formed return (BAD_RETURN items skip this and just have Claimed_by
 
 **Validator return (`mode: task`):**
 - Append a new entry to the task's `Validation Results` array with `{ attempt_no: <Attempts at time of this run>, verdict, fail_reasons, escalate_to_blocked, notes, at }`.
-- Append a `VAL-XXX` entry to `team/validation_log.md` (next monotonic VAL number; dedup-key is `(task_id, attempt_no)` — if an entry with that key exists, skip the append).
+- Append a `VAL-XXX` entry to `.get-it-done/validation_log.md` (next monotonic VAL number; dedup-key is `(task_id, attempt_no)` — if an entry with that key exists, skip the append).
 - Clear `Claimed_by`, `Claimed_at`.
 - If `verdict == pass`: set `Status: done`.
 - If `verdict == fail` AND `escalate_to_blocked == false`: set `Status: needs_rework`, clear `Artifact`.
@@ -412,7 +412,7 @@ For each well-formed return (BAD_RETURN items skip this and just have Claimed_by
 Milestone status is derived (see task_queue.md "Derivation rule") — the dispatcher does NOT write a `Status:` field for milestones. Instead it persists the validator's verdict in the milestone's `Validation Results` array and (where applicable) flips per-task statuses; the next read of milestone_status() will reflect those changes naturally.
 
 - In `## Milestones` section, **first increment** milestone `ValidatorAttempts` by 1, then append to the milestone's `Validation Results` array with `{ attempt_no: <milestone.ValidatorAttempts after increment>, verdict, fail_reasons, task_ids_to_rework, escalate_to_blocked, notes, at }`. Clear `Claimed_by`, `Claimed_at`.
-- Append `MVAL-XXX` entry to `team/validation_log.md` (next monotonic MVAL number; dedup-key is `(milestone_id, attempt_no)`).
+- Append `MVAL-XXX` entry to `.get-it-done/validation_log.md` (next monotonic MVAL number; dedup-key is `(milestone_id, attempt_no)`).
 - If `verdict == pass`: no per-task changes; milestone_status() will derive `validated` from the latest VR entry. Downstream-milestone tasks become eligible on the next tick. **Planned-pause check**: if the milestone entry has `PauseAfter: true`, **append** an entry `{ milestone_id: <M-X>, reason: <milestone.PauseReason> }` to a transient list `planned_pause_list` (initialise to `[]` at the start of Step 9 if not already set). The list is a list — not a single value — because a heterogeneous batch can contain multiple milestone validators, and each passing PauseAfter milestone must be announced (the previous single-value design clobbered earlier entries). Step 11 will read this list and EXIT cleanly after Step 10 closes the batch (soft pause: phase remains EXECUTING, status WAITING — the user's next /continue resumes the next downstream milestone naturally).
 - If `verdict == fail` AND `escalate_to_blocked == false`:
   - If `task_ids_to_rework` is non-empty: for each `task_id` in the list, set that task's `Status: needs_rework`, clear `Artifact`. The next tick's Step 5 will re-pick them as P3 (rework) items. Milestone_status() now derives `pending` (because tasks are no longer all done); once they all re-reach done, derivation flows to `tasks_done` and Step 5 P2 will spawn another milestone validator that reads the appended VR entry as context.
@@ -425,13 +425,13 @@ Milestone status is derived (see task_queue.md "Derivation rule") — the dispat
 - If `verdict == fail` AND `escalate_to_blocked == true`: flip phase to `AWAITING_HUMAN`. Append `[BLOCKER] <milestone_id> escalated by milestone validator` to progress_log.md. Per-task statuses unchanged; milestone_status() will derive `blocked` from the latest VR entry.
 
 **Analyst return:**
-- In `team/research_requests.md`, flip the matching `RQ-X` entry to `Status: fulfilled` and clear `Claimed_by`, `Claimed_at`. Confirm `team/findings/<req_id>.md` exists; if not, treat as `[BAD_RETURN]` (above) — leave the RQ as `Status: open` with `Claimed_by: null` so the next tick re-spawns it.
+- In `.get-it-done/research_requests.md`, flip the matching `RQ-X` entry to `Status: fulfilled` and clear `Claimed_by`, `Claimed_at`. Confirm `.get-it-done/findings/<req_id>.md` exists; if not, treat as `[BAD_RETURN]` (above) — leave the RQ as `Status: open` with `Claimed_by: null` so the next tick re-spawns it.
 - Append `<ISO> [ANALYST_DONE] <req_id>` to progress_log.md.
 
 **Planner return:**
 - Read `next_phase_request`:
   - `ANALYZING`: confirm `research_requests.md` now has the requested `RQ-` IDs with `Status: open`; set `phase = ANALYZING`.
-  - `EXECUTING`: confirm `task_queue.md` and `team/metrics.md` are populated; (Step 4 already DAG-checked, but step 10 will re-run it after we write); set `phase = EXECUTING`.
+  - `EXECUTING`: confirm `task_queue.md` and `.get-it-done/metrics.md` are populated; (Step 4 already DAG-checked, but step 10 will re-run it after we write); set `phase = EXECUTING`.
   - `REPORTING`: rare — only when planner determines the goal is already satisfied; set `phase = REPORTING`.
 - Append `<ISO> [PLAN_DONE] next=<next_phase_request>` to progress_log.md.
 
@@ -495,12 +495,12 @@ Decision tree (checked in order):
 Reflector is NOT part of the relay. It runs once per goal, after every task reaches `Status: done`.
 
 ```
-1. Read team/goal.md, team/task_queue.md, last ~20 entries of team/validation_log.md.
-2. Append to team/progress_log.md:
-     "<ISO> [GOAL_COMPLETE] <goal one-liner>. <N> tasks completed across <M> milestones; first-pass rate <X>/<Y>. Key deliverables: <bullet list of team/workspace/exec-*/ artifact paths>."
+1. Read .get-it-done/goal.md, .get-it-done/task_queue.md, last ~20 entries of .get-it-done/validation_log.md.
+2. Append to .get-it-done/progress_log.md:
+     "<ISO> [GOAL_COMPLETE] <goal one-liner>. <N> tasks completed across <M> milestones; first-pass rate <X>/<Y>. Key deliverables: <bullet list of .get-it-done/workspace/exec-*/ artifact paths>."
 3. Rewrite state.md YAML: phase=COMPLETE, status=WAITING, batch_id=null, batch_started_at=null, batch_ended_at=null, active_agents=[], last_updated=<ISO>. Remove the most recent `## Batch` block IFF its `next_phase == REPORTING` (it's now stale).
 4. Emit the [GOAL_COMPLETE] paragraph to the user.
-5. Spawn reflector via Agent tool. Prompt: "Execute your reflector role per agents/reflector.md. The goal just COMPLETE'd. Analyse validation_log + progress_log + the most recent batch handoffs. Update A-side and B-side learnings per your classification matrix. Do NOT change team/state.md phase. Do NOT emit an agent-return block — your output is the file writes themselves."
+5. Spawn reflector via Agent tool. Prompt: "Execute your reflector role per agents/reflector.md. The goal just COMPLETE'd. Analyse validation_log + progress_log + the most recent batch handoffs. Update A-side and B-side learnings per your classification matrix. Do NOT change .get-it-done/state.md phase. Do NOT emit an agent-return block — your output is the file writes themselves."
 6. Reflector returns; EXIT. Reflection failures are logged ([REFLECT_FAIL]) but do NOT roll back COMPLETE.
 ```
 

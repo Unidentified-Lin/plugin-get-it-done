@@ -160,7 +160,7 @@ Bootstrap copies template files to writable destinations, skipping files that al
 rsync -a --ignore-existing "${PLUGIN_ROOT}/templates/team_learnings/" "${PLUGIN_DATA}/team_learnings/"
 
 # B — per-project state
-rsync -a --ignore-existing "${PLUGIN_ROOT}/templates/team/" team/
+rsync -a --ignore-existing "${PLUGIN_ROOT}/templates/.get-it-done/" .get-it-done/
 ```
 
 ### Windows (PowerShell)
@@ -169,7 +169,7 @@ rsync -a --ignore-existing "${PLUGIN_ROOT}/templates/team/" team/
 robocopy "${PLUGIN_ROOT}\templates\team_learnings" "${PLUGIN_DATA}\team_learnings" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
 
 # B — per-project state
-robocopy "${PLUGIN_ROOT}\templates\team" "team" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
+robocopy "${PLUGIN_ROOT}\templates\.get-it-done" ".get-it-done" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
 ```
 
 `robocopy` flags: `/E` = include subdirs, `/XC /XN /XO` = skip if dest is same/newer/older (i.e., skip existing), `/NFL /NDL /NJH /NJS` = suppress output.

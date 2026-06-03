@@ -97,7 +97,7 @@ Present the complete task list to the user:
 > "以下是完整的任務清單，請確認後我將凍結規劃文件並進入執行。"
 
 Use `AskUserQuestion` / `ask_user` with choices:
-- "確認，凍結並進入執行" → freeze documents; run plan-reviewer; then initialize team/ state
+- "確認，凍結並進入執行" → freeze documents; run plan-reviewer; then initialize .get-it-done/ state
 - "需要調整" → return to C2 for the specific tasks mentioned
 
 **After C3 confirmation**:
@@ -112,12 +112,12 @@ Run bootstrap (see `platform-adapter.md` Section 7 for OS-specific commands):
 # macOS / Linux
 : "${CLAUDE_PLUGIN_ROOT:?CLAUDE_PLUGIN_ROOT is not set}"
 : "${CLAUDE_PLUGIN_DATA:?CLAUDE_PLUGIN_DATA is not set}"
-mkdir -p team/context team/findings team/workspace
+mkdir -p .get-it-done/context .get-it-done/findings .get-it-done/workspace
 rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team_learnings/" "${CLAUDE_PLUGIN_DATA}/team_learnings/"
-rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team/" team/
+rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" .get-it-done/
 ```
 
-Then write `team/goal.md`:
+Then write `.get-it-done/goal.md`:
 ```markdown
 # Active Goal
 
@@ -140,7 +140,7 @@ Human (via /plan)
 <ISO timestamp>
 ```
 
-Write `team/state.md` YAML block (overwrite only the YAML block at the top, preserve everything below it):
+Write `.get-it-done/state.md` YAML block (overwrite only the YAML block at the top, preserve everything below it):
 ```yaml
 schema_version: 2
 phase: EXECUTING
@@ -153,7 +153,7 @@ goal_set: true
 last_updated: <ISO timestamp>
 ```
 
-Write `team/task_queue.md` with all tasks in v2 DAG format. Use the schema from the existing template. Each task entry:
+Write `.get-it-done/task_queue.md` with all tasks in v2 DAG format. Use the schema from the existing template. Each task entry:
 
 ```markdown
 ### T-{n:03d}: {Task Title}
@@ -199,7 +199,7 @@ After all task entries, **append a `## Milestones` section** (required by the di
 
 Repeat for each milestone. Every task must belong to exactly one milestone.
 
-Also write `team/metrics.md` — validators read this for acceptance criteria by stable ID:
+Also write `.get-it-done/metrics.md` — validators read this for acceptance criteria by stable ID:
 
 ```markdown
 ## T-001: {Task Title}

@@ -204,7 +204,7 @@ Always update the planning document immediately after each step — no "fill in 
 | After B4 verification pass | 影響範圍 — direct + indirect impacts |
 | C1 framework confirmed | Lock task list structure |
 | After each C2 fill | That task's 檔案路徑, 實作步驟, 驗證方式, 測試旗標 |
-| C3 confirmed | Set document status; initialize team/ state |
+| C3 confirmed | Set document status; initialize .get-it-done/ state |
 
 ---
 

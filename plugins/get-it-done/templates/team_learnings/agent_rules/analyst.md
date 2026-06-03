@@ -14,7 +14,7 @@ _Updated by Reflector. Read by Analyst at the start of every run._
 **Reason**: Stage 4 runs analysts in parallel (up to N=5). Scope creep in one analyst means its answer to its own RQ is incomplete (token budget spent on side quests), and the planner's eventual aggregation gets cross-contaminated by half-answers to neighboring questions.
 
 ### AR-003 | Priority: high
-**Rule**: Write to EXACTLY ONE file: `team/findings/RQ-<your-assigned-id>.md`. Do NOT write to other `team/findings/RQ-*.md` files even when you think they're related; they belong to peer analysts who may be running concurrently in this same batch.
+**Rule**: Write to EXACTLY ONE file: `.get-it-done/findings/RQ-<your-assigned-id>.md`. Do NOT write to other `.get-it-done/findings/RQ-*.md` files even when you think they're related; they belong to peer analysts who may be running concurrently in this same batch.
 **Reason**: Per-analyst file isolation is the entire reason parallel Analyst spawn is safe. Cross-writes corrupt peer findings non-deterministically (whichever analyst writes last wins) and break Planner's per-RQ aggregation.
 
 ### AR-004 | Priority: medium

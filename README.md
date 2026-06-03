@@ -15,7 +15,7 @@ claude plugin marketplace add Unidentified-Lin/plugin-get-it-done
 | Plugin | Skills | Description |
 |--------|--------|-------------|
 | `get-it-done` | `/objective` | Set business goal and initialize agent team, v2 state schema, bootstrap workspace |
-| | `/adjust` | Refine the active goal mid-flight — soft (append constraints, preserve task_queue/prd/findings) or hard (rewrite goal, reset planner artifacts). Both preserve progress_log, validation_log, and team/context |
+| | `/adjust` | Refine the active goal mid-flight — soft (append constraints, preserve task_queue/prd/findings) or hard (rewrite goal, reset planner artifacts). Both preserve progress_log, validation_log, and .get-it-done/context |
 | | `/continue` | Batch-aware dispatcher: autopilots from goal to COMPLETE; only stops at terminal phase, planner-declared PauseAfter milestones, or crash recovery. Schedules executors/validators/analysts in parallel (N≤5), enforces DAG & collision detection |
 
 ## 🔧 Install a Plugin
@@ -52,12 +52,12 @@ plugins/get-it-done/
     continue/SKILL.md           # Dispatcher: Step 0-11 inner loop (crash recovery, DAG check, batch pool, atomic pre-write, spawn, parse, persist, close, loop)
   
   templates/
-    team/                       # Per-goal runtime state (state.md, task_queue.md, prd.md, findings/, workspace/)
+    .get-it-done/                       # Per-goal runtime state (state.md, task_queue.md, prd.md, findings/, workspace/)
     team_learnings/
       agent_rules/              # Dynamic rules (A-side, cross-project): planner/analyst/executor/validator/reflector
       patterns.md               # Recurring patterns (provisional + promoted)
       errors.md, handoff_lessons.md, proposed_changes.md
-    team/context/               # Per-project learnings (B-side): domain_knowledge, tech_stack, codebase_map, decisions, stakeholder_notes
+    .get-it-done/context/               # Per-project learnings (B-side): domain_knowledge, tech_stack, codebase_map, decisions, stakeholder_notes
 ```
 
 ## 🎯 Core Design (v2 Architecture)
@@ -69,7 +69,7 @@ plugins/get-it-done/
 - **Crash recovery**: Three sub-cases (PLANNING timeout, sub-agent interrupted, batch close interrupted) with idempotency guarantees
 - **Collision detection**: Source-path overlaps prevented via `Touches` field + dispatcher pool check
 - **Autopilot with planned pauses**: Dispatcher runs to COMPLETE without context-budget yields; planner decides pause checkpoints at planning time via `PauseAfter: true` on milestones (e.g. UX review, real-world testing). Soft pause — next /continue resumes naturally
-- **Dual-tier learning**: A-side rules survive plugin updates (cross-project); B-side rules live in `team/context/` (project-specific)
+- **Dual-tier learning**: A-side rules survive plugin updates (cross-project); B-side rules live in `.get-it-done/context/` (project-specific)
 - **Full 繁體中文 compliance**: All CLI output in Traditional Chinese
 
 ## 📖 Quick Start
@@ -85,17 +85,17 @@ plugins/get-it-done/
 /adjust 另外要求：節點刪除前需確認對話框，且匯出 PNG 要含浮水印
 
 # Check status
-cat team/state.md                          # Current phase, batch history
-cat team/progress_log.md                   # Execution timeline
-cat team/validation_log.md                 # Validation verdicts
-cat team/context/domain_knowledge.md       # Project learnings
+cat .get-it-done/state.md                          # Current phase, batch history
+cat .get-it-done/progress_log.md                   # Execution timeline
+cat .get-it-done/validation_log.md                 # Validation verdicts
+cat .get-it-done/context/domain_knowledge.md       # Project learnings
 ```
 
 ## 🔗 Reference
 
 - **Full architecture guide**: `plugins/get-it-done/README.md`
 - **Agent rules matrix**: `plugins/get-it-done/templates/team_learnings/agent_rules/*.md`
-- **Schema & contracts**: `plugins/get-it-done/templates/team/state.md`
+- **Schema & contracts**: `plugins/get-it-done/templates/.get-it-done/state.md`
 
 ---
 
