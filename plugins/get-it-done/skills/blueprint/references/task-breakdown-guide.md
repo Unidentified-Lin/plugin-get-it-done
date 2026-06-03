@@ -122,7 +122,7 @@ Then write `.get-it-done/goal.md`:
 # Active Goal
 
 ## Status
-Active — executing from /plan output.
+Active — executing from /blueprint output.
 
 ## Goal
 <feature name from planning document>
@@ -134,7 +134,7 @@ Active — executing from /plan output.
 <from planning document 驗收標準 or derived from 需求重點>
 
 ## Set By
-Human (via /plan)
+Human (via /blueprint)
 
 ## Set At
 <ISO timestamp>

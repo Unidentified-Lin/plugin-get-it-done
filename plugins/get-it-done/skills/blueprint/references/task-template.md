@@ -45,4 +45,4 @@
 
 ---
 
-*此文件由 `get-it-done:plan` skill 自動建立與維護。*
+*此文件由 `get-it-done:blueprint` skill 自動建立與維護。*

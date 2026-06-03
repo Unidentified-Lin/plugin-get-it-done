@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "get-it-done",
   "displayName": "Get It Done — Unified Dev Workflow",
-  "version": "1.0.1",
-  "description": "Unified development workflow plugin combining interactive planning with autonomous execution. Five skills: /plan (interactive A→B→C planning with scope analysis, user confirmation loops, task freeze → initializes get-it-done execution state), /objective (set goal and start autonomous planning), /continue (batch-aware dispatcher autopilots to COMPLETE), /adjust (mid-flight goal refinement), /review (code review against universal engineering checklist). Nine agents: planner, scope-scanner, scope-verifier, plan-reviewer, analyst, executor, validator, code-reviewer, reflector. Cross-platform: runs on Claude Code (macOS/Linux) and GitHub Copilot (Windows/macOS). v2 architecture with crash recovery, A/B learning, DAG milestones.",
+  "version": "1.0.2",
+  "description": "Unified development workflow plugin combining interactive planning with autonomous execution. Five skills: /blueprint (interactive A→B→C planning with scope analysis, user confirmation loops, task freeze → initializes get-it-done execution state), /objective (set goal and start autonomous planning), /continue (batch-aware dispatcher autopilots to COMPLETE), /adjust (mid-flight goal refinement), /review (code review against universal engineering checklist). Nine agents: planner, scope-scanner, scope-verifier, plan-reviewer, analyst, executor, validator, code-reviewer, reflector. Cross-platform: runs on Claude Code (macOS/Linux) and GitHub Copilot (Windows/macOS). v2 architecture with crash recovery, A/B learning, DAG milestones.",
   "author": {
     "name": "Unidentified-Lin"
   },

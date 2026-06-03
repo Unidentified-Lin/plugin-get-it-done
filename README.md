@@ -14,9 +14,11 @@ claude plugin marketplace add Unidentified-Lin/plugin-get-it-done
 
 | Plugin | Skills | Description |
 |--------|--------|-------------|
-| `get-it-done` | `/objective` | Set business goal and initialize agent team, v2 state schema, bootstrap workspace |
+| `get-it-done` | `/blueprint` | Interactive A→B→C planning pipeline — scope analysis, user confirmation loops, task freeze → initializes `.get-it-done/` execution state for `/continue` |
+| | `/objective` | Set business goal and initialize agent team, v2 state schema, bootstrap workspace |
 | | `/adjust` | Refine the active goal mid-flight — soft (append constraints, preserve task_queue/prd/findings) or hard (rewrite goal, reset planner artifacts). Both preserve progress_log, validation_log, and .get-it-done/context |
 | | `/continue` | Batch-aware dispatcher: autopilots from goal to COMPLETE; only stops at terminal phase, planner-declared PauseAfter milestones, or crash recovery. Schedules executors/validators/analysts in parallel (N≤5), enforces DAG & collision detection |
+| | `/review` | Code review against universal engineering checklist (correctness, error handling, security, data integrity, performance, style) |
 
 ## 🔧 Install a Plugin
 
@@ -47,9 +49,11 @@ plugins/get-it-done/
     reflector.md                # Post-cycle learning analysis (8 rules RR-001..008)
   
   skills/
+    blueprint/SKILL.md          # Interactive A→B→C planning pipeline → hands off to /continue
     objective/SKILL.md          # Goal bootstrap: state.md schema, workspace init
     adjust/SKILL.md             # Mid-flight goal refinement (soft/hard); auto-pauses RUNNING dispatcher via AWAITING_HUMAN
     continue/SKILL.md           # Dispatcher: Step 0-11 inner loop (crash recovery, DAG check, batch pool, atomic pre-write, spawn, parse, persist, close, loop)
+    review/SKILL.md             # Code review against universal engineering checklist
   
   templates/
     .get-it-done/                       # Per-goal runtime state (state.md, task_queue.md, prd.md, findings/, workspace/)
@@ -99,4 +103,4 @@ cat .get-it-done/context/domain_knowledge.md       # Project learnings
 
 ---
 
-**Version**: 0.9.0 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin
+**Version**: 1.0.2 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin

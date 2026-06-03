@@ -1,5 +1,5 @@
 ---
-name: plan
+name: blueprint
 description: >-
   Analyzes requirements and produces a progressive planning document covering
   scope definition, requirements clarification, solution proposals, and task
@@ -15,7 +15,7 @@ description: >-
   Do NOT trigger for code review requests — use /review instead.
 ---
 
-# Plan Skill
+# Blueprint Skill
 
 This skill drives the full interactive planning pipeline (steps A through C) and produces a
 frozen planning document that can be handed off to `/continue` for autonomous execution.
@@ -24,8 +24,8 @@ frozen planning document that can be handed off to `/continue` for autonomous ex
 
 Before doing anything else:
 1. Locate this skill's absolute directory path:
-   - **Claude Code**: Run `/skills info plan` or derive from `${CLAUDE_PLUGIN_ROOT}/skills/plan/`
-   - **GitHub Copilot**: Run `/skills info plan`
+   - **Claude Code**: Run `/skills info blueprint` or derive from `${CLAUDE_PLUGIN_ROOT}/skills/blueprint/`
+   - **GitHub Copilot**: Run `/skills info blueprint`
    Store the result as `{skill-dir}`.
 2. Read `{skill-dir}/../../references/platform-adapter.md` — cross-platform operations reference.
 3. Read `{skill-dir}/../../references/main-flow.md` — full pipeline map.
