@@ -8,7 +8,5 @@
     "name": "Unidentified-Lin"
   },
   "license": "MIT",
-  "skills": "skills/",
-  "agents": "agents/",
   "keywords": ["agent-team", "autonomous", "planning", "multi-agent", "orchestration", "code-review", "workflow"]
 }
