@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>get-it-done — /objective 自主執行路徑</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #080c14;
+  color: #e2e8f0;
+  min-height: 100vh;
+  padding: 36px 24px 60px;
+}
+
+/* ── Header ── */
+.page-header { text-align: center; margin-bottom: 32px; }
+.page-header h1 { font-size: 1.9rem; font-weight: 800; color: #fff; letter-spacing: -0.02em; }
+.page-header .subtitle { color: #64748b; font-size: 0.88rem; margin-top: 6px; }
+.badges { display: flex; justify-content: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.badge { display: inline-block; border-radius: 20px; padding: 3px 14px; font-size: 0.76rem; }
+.badge-blue  { background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.4); color: #93c5fd; }
+.badge-green { background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.4); color: #6ee7b7; }
+.badge-purple{ background: rgba(139,92,246,0.15); border: 1px solid rgba(139,92,246,0.4); color: #c4b5fd; }
+
+/* ── Theme toggle ── */
+.theme-toggle {
+  position: fixed; top: 18px; right: 22px; z-index: 1000;
+  background: rgba(30,41,59,0.9); border: 1px solid #334155;
+  border-radius: 20px; padding: 6px 14px;
+  font-size: 0.78rem; color: #94a3b8; cursor: pointer;
+  display: flex; align-items: center; gap: 6px;
+  backdrop-filter: blur(8px); transition: all 0.2s;
+}
+.theme-toggle:hover { background: rgba(51,65,85,0.95); border-color: #475569; color: #e2e8f0; }
+
+/* ── Legend ── */
+.legend-wrapper { max-width: 1400px; margin: 0 auto 28px; display: flex; flex-direction: column; gap: 8px; }
+.legend { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+.legend-row-label {
+  font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em;
+  color: #334155; font-weight: 600; align-self: center; flex-shrink: 0; min-width: 40px;
+}
+.legend-item { display: flex; align-items: center; gap: 7px; font-size: 0.77rem; color: #64748b; }
+.legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+.legend-dot.round { border-radius: 50%; }
+.legend-divider { width: 1px; height: 16px; background: #1e293b; align-self: center; margin: 0 4px; }
+
+/* ── sm-link ── */
+.sm-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(139,92,246,0.12); border: 1px solid rgba(139,92,246,0.35);
+  border-radius: 8px; padding: 5px 14px; font-size: 0.76rem; color: #c4b5fd;
+  text-decoration: none; margin-top: 12px; transition: background 0.2s;
+}
+.sm-link:hover { background: rgba(139,92,246,0.2); }
+
+/* ── Diagram ── */
+.diagram { max-width: 1400px; margin: 0 auto; display: flex; flex-direction: column; gap: 0; }
+
+/* ── Vertical connector ── */
+.v-connector { display: flex; justify-content: center; align-items: center; height: 32px; flex-direction: column; }
+.v-connector .line { width: 2px; height: 14px; background: #1e293b; }
+.v-connector .arrow { color: #334155; font-size: 1rem; line-height: 1; }
+.v-connector .vlabel { font-size: 0.64rem; color: #475569; margin-bottom: 4px; font-family: 'Cascadia Code', monospace; }
+
+/* ── Entry paths row ── */
+.entry-row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 8px; }
+.entry-card {
+  border-radius: 16px; padding: 18px 20px; position: relative; overflow: hidden;
+}
+.entry-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; }
+.entry-interactive { background: rgba(139,92,246,0.06); border: 1px solid #7c3aed; }
+.entry-interactive::before { background: linear-gradient(90deg,#7c3aed,#a78bfa,#7c3aed); }
+.entry-autonomous { background: rgba(59,130,246,0.06); border: 1px solid #3b82f6; }
+.entry-autonomous::before { background: linear-gradient(90deg,#1d4ed8,#3b82f6,#60a5fa,#1d4ed8); }
+.entry-card .ec-cmd { font-family: 'Cascadia Code', monospace; font-size: 0.95rem; font-weight: 700; margin-bottom: 5px; }
+.entry-interactive .ec-cmd { color: #c4b5fd; }
+.entry-autonomous .ec-cmd { color: #93c5fd; }
+.entry-card .ec-name { font-size: 0.82rem; font-weight: 600; color: #cbd5e1; margin-bottom: 4px; }
+.entry-card .ec-desc { font-size: 0.74rem; color: #64748b; line-height: 1.5; }
+.entry-card .ec-when { font-size: 0.7rem; color: #475569; margin-top: 8px; font-style: italic; }
+
+/* ── Orchestrator (dispatcher) ── */
+.orchestrator {
+  background: linear-gradient(135deg, #0f2040 0%, #0d1f3c 100%);
+  border: 2px solid #3b82f6; border-radius: 18px; padding: 20px 32px;
+  box-shadow: 0 0 40px rgba(59,130,246,0.18), 0 4px 24px rgba(0,0,0,0.4);
+  position: relative; overflow: hidden;
+}
+.orchestrator::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px;
+  background: linear-gradient(90deg, #1d4ed8, #3b82f6, #60a5fa, #3b82f6, #1d4ed8);
+}
+.orch-left h2 { font-size: 1.1rem; font-weight: 700; color: #93c5fd; margin-bottom: 5px; }
+.orch-left .role { font-size: 0.8rem; color: #7dd3fc; margin-bottom: 12px; opacity: 0.85; }
+.resp-tags { display: flex; gap: 7px; flex-wrap: wrap; }
+.resp-tag {
+  background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.3);
+  border-radius: 20px; padding: 3px 11px; font-size: 0.72rem; color: #93c5fd;
+}
+
+/* ── User checkpoint detail ── */
+.checkpoint-detail {
+  background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.25);
+  border-radius: 12px; padding: 12px 18px; margin: 4px auto; max-width: 1000px;
+}
+.checkpoint-detail .cp-title {
+  font-size: 0.76rem; color: #fbbf24; font-weight: 600;
+  display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+}
+.exit-options { display: flex; gap: 8px; flex-wrap: wrap; }
+.exit-opt {
+  background: rgba(15,23,42,0.7); border: 1px solid #1e293b; border-radius: 8px;
+  padding: 5px 12px; font-size: 0.72rem; color: #94a3b8;
+}
+.exit-opt.primary { border-color: rgba(16,185,129,0.4); color: #6ee7b7; }
+.exit-opt.warn    { border-color: rgba(239,68,68,0.4);   color: #f87171; }
+.exit-opt.purple  { border-color: rgba(139,92,246,0.4);  color: #c4b5fd; }
+
+/* ── Phase block ── */
+.phase { border-radius: 16px; padding: 18px 18px 14px; }
+.phase-0 { background: rgba(51,65,85,0.25);   border: 1px solid #334155; }
+.phase-1 { background: rgba(16,185,129,0.06);  border: 1px solid #059669; }
+.phase-2 { background: rgba(245,158,11,0.06);  border: 1px solid #d97706; }
+.phase-3 { background: rgba(239,68,68,0.06);   border: 1px solid #dc2626; }
+.phase-p { background: rgba(139,92,246,0.06);  border: 1px solid #7c3aed; }
+
+.phase-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.phase-num { font-size: 0.68rem; font-weight: 700; padding: 3px 10px; border-radius: 6px; letter-spacing: 0.06em; }
+.phase-0 .phase-num { background: #1e293b; color: #94a3b8; }
+.phase-1 .phase-num { background: rgba(16,185,129,0.15);  color: #34d399; }
+.phase-2 .phase-num { background: rgba(245,158,11,0.15);  color: #fbbf24; }
+.phase-3 .phase-num { background: rgba(239,68,68,0.15);   color: #f87171; }
+.phase-p .phase-num { background: rgba(139,92,246,0.15);  color: #c4b5fd; }
+
+.phase-title { font-size: 0.98rem; font-weight: 700; }
+.phase-0 .phase-title { color: #cbd5e1; }
+.phase-1 .phase-title { color: #6ee7b7; }
+.phase-2 .phase-title { color: #fde68a; }
+.phase-3 .phase-title { color: #fca5a5; }
+.phase-p .phase-title { color: #c4b5fd; }
+.phase-desc { font-size: 0.74rem; color: #475569; margin-left: auto; text-align: right; }
+
+/* ── Agents row ── */
+.agents-row { display: flex; gap: 10px; align-items: stretch; flex-wrap: wrap; }
+.agent-arrow-h { display: flex; align-items: center; color: #334155; font-size: 1rem; flex-shrink: 0; padding-top: 18px; }
+.cp-label {
+  display: inline-flex; align-items: center;
+  background: rgba(251,191,36,0.15); border: 1px solid rgba(251,191,36,0.5);
+  border-radius: 4px; padding: 1px 7px;
+  font-size: 0.62rem; font-weight: 700; color: #fbbf24; letter-spacing: 0.04em; margin-left: 4px;
+}
+
+/* ── Parallel / batch group ── */
+.parallel-group {
+  border: 1px dashed rgba(148,163,184,0.25); border-radius: 7px;
+  padding: 14px 8px 8px; position: relative; margin-top: 4px;
+  display: flex; gap: 10px; flex-wrap: wrap; flex: 1;
+}
+.parallel-group::before {
+  content: attr(data-label); position: absolute; top: -8px; left: 8px;
+  background: rgba(8,12,20,0.88); font-size: 0.58rem;
+  color: #94a3b8; padding: 0 5px; letter-spacing: 0.06em; font-weight: 600;
+}
+
+/* ── Agent card ── */
+.agent-card {
+  background: rgba(8,12,20,0.88); border: 1px solid #1e293b;
+  border-radius: 12px; padding: 13px;
+  flex: 1; min-width: 168px; max-width: 280px;
+  display: flex; flex-direction: column; position: relative; overflow: hidden;
+}
+.agent-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+.phase-0 .agent-card::before { background: #475569; }
+.phase-1 .agent-card::before { background: linear-gradient(90deg, #059669, #34d399); }
+.phase-2 .agent-card::before { background: linear-gradient(90deg, #d97706, #fbbf24); }
+.phase-3 .agent-card::before { background: linear-gradient(90deg, #dc2626, #f87171); }
+.phase-p .agent-card::before { background: linear-gradient(90deg, #7c3aed, #a78bfa); }
+
+.agent-icon { font-size: 1.05rem; margin-bottom: 4px; }
+.agent-name { font-size: 0.85rem; font-weight: 700; color: #e2e8f0; margin-bottom: 3px; font-family: 'Cascadia Code', monospace; }
+.agent-role { font-size: 0.71rem; color: #64748b; margin-bottom: 10px; line-height: 1.4; }
+.skills-sep { height: 1px; background: #1e293b; margin-bottom: 8px; }
+.skills-label { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; color: #334155; margin-bottom: 6px; font-weight: 600; }
+.skill-item {
+  background: rgba(30,41,59,0.6); border: 1px solid #1e293b; border-radius: 5px;
+  padding: 3px 8px; font-size: 0.69rem; color: #64748b;
+  margin-bottom: 3px; display: flex; align-items: center; gap: 5px;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+.skill-item::before { content: '▸'; font-size: 0.58rem; color: #334155; }
+.write-item {
+  background: rgba(8,47,73,0.5); border: 1px solid rgba(14,116,144,0.4);
+  border-radius: 5px; padding: 3px 8px; font-size: 0.67rem; color: #38bdf8;
+  margin-bottom: 3px; display: flex; align-items: center; gap: 5px;
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+.write-item::before { content: '✎'; font-size: 0.58rem; }
+.step-label { font-size: 0.62rem; letter-spacing: 0.06em; color: #64748b; margin-bottom: 5px; margin-top: 2px; font-weight: 600; }
+
+/* ── Data output ── */
+.data-output {
+  margin-top: 12px; background: rgba(15,23,42,0.7); border: 1px dashed #1e293b;
+  border-radius: 9px; padding: 8px 14px; font-size: 0.72rem; color: #475569;
+  display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap;
+}
+.data-output .out-icon { color: #3b82f6; font-size: 0.9rem; flex-shrink: 0; }
+.data-output code { font-family: 'Cascadia Code', 'Fira Code', monospace; color: #64748b; font-size: 0.69rem; }
+
+/* ── notes ── */
+.loop-note {
+  margin-top: 10px; background: rgba(239,68,68,0.06); border: 1px dashed #dc2626;
+  border-radius: 9px; padding: 8px 14px; font-size: 0.72rem; color: #f87171;
+  display: flex; align-items: flex-start; gap: 8px;
+}
+.warning-note {
+  margin-top: 6px; background: rgba(245,158,11,0.06); border: 1px dashed #d97706;
+  border-radius: 9px; padding: 8px 14px; font-size: 0.72rem; color: #fbbf24;
+  display: flex; align-items: flex-start; gap: 8px;
+}
+.info-note {
+  margin-top: 6px; background: rgba(59,130,246,0.06); border: 1px dashed #3b82f6;
+  border-radius: 9px; padding: 8px 14px; font-size: 0.72rem; color: #93c5fd;
+  display: flex; align-items: flex-start; gap: 8px;
+}
+
+/* ── Decision gate ── */
+.decision-gate { display: flex; flex-direction: column; align-items: center; flex: 1; min-width: 0; margin-top: 14px; }
+.decision-gate-node {
+  background: rgba(30,41,59,0.6); border: 1px solid #334155; border-radius: 10px;
+  padding: 8px 20px; text-align: center; font-size: 0.72rem; color: #94a3b8; max-width: 560px; width: 100%;
+}
+.decision-gate-node strong { color: #e2e8f0; }
+.decision-gate-node .cond { font-family: 'Cascadia Code', monospace; font-size: 0.68rem; color: #93c5fd; margin-top: 3px; }
+.decision-branches { display: flex; gap: 0; width: 100%; max-width: 720px; justify-content: center; }
+.decision-branch { display: flex; flex-direction: column; align-items: center; flex: 1; }
+.branch-connector { width: 1px; height: 22px; background: #334155; }
+.branch-label { font-size: 0.64rem; font-weight: 700; padding: 2px 9px; border-radius: 3px; margin-bottom: 6px; white-space: nowrap; text-align: center; }
+.branch-label.yes { background: rgba(16,185,129,0.2); color: #6ee7b7; }
+.branch-label.no  { background: rgba(100,116,139,0.2); color: #94a3b8; }
+.branch-label.amber { background: rgba(245,158,11,0.2); color: #fde68a; }
+.branch-box { border-radius: 8px; padding: 8px 12px; font-size: 0.69rem; text-align: center; line-height: 1.6; width: 92%; }
+.branch-box.yes { background: rgba(16,185,129,0.06); border: 1px dashed #059669; color: #6ee7b7; }
+.branch-box.no  { background: rgba(15,23,42,0.7); border: 1px dashed #334155; color: #64748b; }
+.branch-box.amber { background: rgba(245,158,11,0.06); border: 1px dashed #d97706; color: #fde68a; }
+
+/* ── Decision table ── */
+.decision-table { flex: 1; min-width: 0; background: rgba(15,23,42,0.7); border: 1px solid #1e293b; border-radius: 9px; overflow: hidden; margin-top: 14px; }
+.dt-header { background: rgba(30,41,59,0.6); padding: 6px 12px; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.1em; color: #475569; font-weight: 600; }
+.dt-row { display: flex; padding: 5px 12px; border-top: 1px solid #1e293b; gap: 10px; align-items: flex-start; }
+.dt-condition { font-size: 0.69rem; color: #64748b; flex: 1.5; font-family: 'Cascadia Code', monospace; }
+.dt-arrow { color: #334155; font-size: 0.7rem; flex-shrink: 0; padding-top: 1px; }
+.dt-action { font-size: 0.69rem; color: #94a3b8; flex: 2; }
+
+/* ── Model badge ── */
+.model-badge {
+  display: inline-flex; align-items: center; gap: 4px; border-radius: 5px; padding: 2px 8px;
+  font-size: 0.65rem; font-weight: 600; font-family: 'Cascadia Code', monospace; margin-bottom: 6px;
+}
+.model-premium  { background: rgba(139,92,246,0.18); border: 1px solid rgba(139,92,246,0.45); color: #c4b5fd; }
+.model-standard { background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.35); color: #93c5fd; }
+
+/* ── Stats ── */
+.stats-bar { max-width: 1400px; margin: 24px auto 0; background: rgba(15,23,42,0.7); border: 1px solid #1e293b; border-radius: 16px; padding: 20px 26px; }
+.stats-bar h3 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.12em; color: #334155; margin-bottom: 14px; font-weight: 600; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.stat-card { text-align: center; border-radius: 10px; padding: 14px 10px; border: 1px solid; }
+.stat-card .num { font-size: 1.9rem; font-weight: 800; line-height: 1; }
+.stat-card .label { font-size: 0.72rem; margin-top: 4px; }
+.stat-blue  { background: rgba(59,130,246,0.08);  border-color: rgba(59,130,246,0.3);  } .stat-blue  .num { color: #3b82f6; } .stat-blue  .label { color: #93c5fd; }
+.stat-green { background: rgba(16,185,129,0.08);  border-color: rgba(16,185,129,0.3);  } .stat-green .num { color: #10b981; } .stat-green .label { color: #6ee7b7; }
+.stat-amber { background: rgba(245,158,11,0.08);  border-color: rgba(245,158,11,0.3);  } .stat-amber .num { color: #f59e0b; } .stat-amber .label { color: #fde68a; }
+.stat-red   { background: rgba(239,68,68,0.08);   border-color: rgba(239,68,68,0.3);   } .stat-red   .num { color: #ef4444; } .stat-red   .label { color: #fca5a5; }
+.stat-slate { background: rgba(100,116,139,0.08); border-color: rgba(100,116,139,0.3); } .stat-slate .num { color: #94a3b8; } .stat-slate .label { color: #cbd5e1; }
+.stat-purple{ background: rgba(139,92,246,0.08);  border-color: rgba(139,92,246,0.3);  } .stat-purple .num { color: #a78bfa; } .stat-purple .label { color: #c4b5fd; }
+
+/* ── Must NOT ── */
+.must-not { max-width: 1400px; margin: 12px auto 0; background: rgba(239,68,68,0.05); border: 1px solid rgba(239,68,68,0.2); border-radius: 14px; padding: 14px 22px; }
+.must-not h4 { font-size: 0.72rem; color: #f87171; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px; font-weight: 600; }
+.must-not ul { list-style: none; display: flex; flex-wrap: wrap; gap: 10px; }
+.must-not li { font-size: 0.77rem; color: #94a3b8; display: flex; align-items: center; gap: 6px; }
+.must-not li::before { content: '⛔'; font-size: 0.68rem; }
+
+/* ── Section divider label ── */
+.section-divider { display: flex; align-items: center; gap: 12px; max-width: 1400px; margin: 30px auto 14px; }
+.section-divider .sd-line { flex: 1; height: 1px; background: #1e293b; }
+.section-divider .sd-text { font-size: 0.74rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.sd-purple .sd-text { color: #a78bfa; } .sd-purple .sd-line { background: rgba(139,92,246,0.2); }
+.sd-blue .sd-text { color: #60a5fa; } .sd-blue .sd-line { background: rgba(59,130,246,0.2); }
+
+/* ══════════════════════ LIGHT MODE ══════════════════════ */
+body.light-mode { background: #f1f5f9; color: #0f172a; }
+body.light-mode .theme-toggle { background: rgba(241,245,249,0.95); border-color: #cbd5e1; color: #475569; }
+body.light-mode .theme-toggle:hover { background: #e2e8f0; color: #0f172a; }
+body.light-mode .page-header h1 { color: #0f172a; }
+body.light-mode .page-header .subtitle { color: #94a3b8; }
+body.light-mode .legend-row-label { color: #94a3b8; }
+body.light-mode .legend-item { color: #475569; }
+body.light-mode .legend-divider { background: #e2e8f0; }
+body.light-mode .orchestrator { background: linear-gradient(135deg, #dbeafe 0%, #eff6ff 100%); border-color: #3b82f6; box-shadow: 0 0 30px rgba(59,130,246,0.12), 0 4px 16px rgba(0,0,0,0.08); }
+body.light-mode .orch-left h2 { color: #1d4ed8; }
+body.light-mode .orch-left .role { color: #3b82f6; }
+body.light-mode .resp-tag { background: rgba(59,130,246,0.08); border-color: rgba(59,130,246,0.25); color: #1d4ed8; }
+body.light-mode .sm-link { background: rgba(139,92,246,0.08); border-color: rgba(139,92,246,0.3); color: #7c3aed; }
+body.light-mode .v-connector .line { background: #e2e8f0; }
+body.light-mode .v-connector .arrow { color: #94a3b8; }
+body.light-mode .v-connector .vlabel { color: #94a3b8; }
+body.light-mode .agent-arrow-h { color: #cbd5e1; }
+body.light-mode .entry-interactive { background: rgba(245,243,255,0.9); border-color: #7c3aed; }
+body.light-mode .entry-autonomous { background: rgba(239,246,255,0.9); border-color: #3b82f6; }
+body.light-mode .entry-interactive .ec-cmd { color: #7c3aed; }
+body.light-mode .entry-autonomous .ec-cmd { color: #1d4ed8; }
+body.light-mode .entry-card .ec-name { color: #334155; }
+body.light-mode .entry-card .ec-desc { color: #64748b; }
+body.light-mode .entry-card .ec-when { color: #94a3b8; }
+body.light-mode .phase-0 { background: rgba(241,245,249,0.8); border-color: #94a3b8; }
+body.light-mode .phase-1 { background: rgba(240,253,249,0.9); border-color: #059669; }
+body.light-mode .phase-2 { background: rgba(255,251,235,0.9); border-color: #d97706; }
+body.light-mode .phase-3 { background: rgba(254,242,242,0.9); border-color: #dc2626; }
+body.light-mode .phase-p { background: rgba(245,243,255,0.9); border-color: #7c3aed; }
+body.light-mode .phase-0 .phase-title { color: #334155; }
+body.light-mode .phase-0 .phase-num { background: #e2e8f0; color: #64748b; }
+body.light-mode .phase-desc { color: #94a3b8; }
+body.light-mode .agent-card { background: #ffffff; border-color: #e2e8f0; box-shadow: 0 1px 4px rgba(0,0,0,0.07); }
+body.light-mode .agent-name { color: #0f172a; }
+body.light-mode .agent-role { color: #64748b; }
+body.light-mode .skills-sep { background: #e2e8f0; }
+body.light-mode .skills-label { color: #94a3b8; }
+body.light-mode .skill-item { background: #f8fafc; border-color: #e2e8f0; color: #475569; }
+body.light-mode .skill-item::before { color: #cbd5e1; }
+body.light-mode .write-item { background: rgba(224,242,254,0.9); border-color: rgba(14,116,144,0.35); color: #0369a1; }
+body.light-mode .step-label { color: #475569; }
+body.light-mode .data-output { background: #f8fafc; border-color: #e2e8f0; color: #64748b; }
+body.light-mode .data-output code { color: #475569; }
+body.light-mode .out-icon { color: #2563eb; }
+body.light-mode .loop-note { background: rgba(254,242,242,0.9); border-color: #fca5a5; color: #dc2626; }
+body.light-mode .warning-note { background: rgba(255,251,235,0.9); border-color: #fde68a; color: #b45309; }
+body.light-mode .info-note { background: rgba(239,246,255,0.9); border-color: #93c5fd; color: #1d4ed8; }
+body.light-mode .parallel-group { border-color: rgba(100,116,139,0.3); }
+body.light-mode .parallel-group::before { background: #f1f5f9; color: #64748b; }
+body.light-mode .decision-gate-node { background: #f8fafc; border-color: #e2e8f0; }
+body.light-mode .decision-gate-node strong { color: #1e293b; }
+body.light-mode .branch-connector { background: #e2e8f0; }
+body.light-mode .branch-box.yes { background: rgba(240,253,249,0.9); border-color: #6ee7b7; color: #059669; }
+body.light-mode .branch-box.no  { background: #f8fafc; border-color: #e2e8f0; color: #475569; }
+body.light-mode .branch-box.amber { background: rgba(255,251,235,0.9); border-color: #fde68a; color: #b45309; }
+body.light-mode .decision-table { background: #f8fafc; border-color: #e2e8f0; }
+body.light-mode .dt-header { background: #f1f5f9; color: #64748b; }
+body.light-mode .dt-row { border-color: #f1f5f9; }
+body.light-mode .dt-condition { color: #334155; }
+body.light-mode .dt-action { color: #475569; }
+body.light-mode .dt-arrow { color: #94a3b8; }
+body.light-mode .checkpoint-detail { background: rgba(255,251,235,0.9); border-color: rgba(245,158,11,0.4); }
+body.light-mode .checkpoint-detail .cp-title { color: #b45309; }
+body.light-mode .exit-opt { background: #f8fafc; border-color: #e2e8f0; color: #334155; }
+body.light-mode .exit-opt.primary { border-color: rgba(16,185,129,0.5); color: #059669; }
+body.light-mode .exit-opt.warn    { border-color: rgba(239,68,68,0.4);   color: #dc2626; }
+body.light-mode .exit-opt.purple  { border-color: rgba(139,92,246,0.4);  color: #7c3aed; }
+body.light-mode .model-premium  { background: rgba(139,92,246,0.08); border-color: rgba(139,92,246,0.3); color: #7c3aed; }
+body.light-mode .model-standard { background: rgba(59,130,246,0.08); border-color: rgba(59,130,246,0.3); color: #2563eb; }
+body.light-mode .stats-bar { background: #ffffff; border-color: #e2e8f0; }
+body.light-mode .stats-bar h3 { color: #94a3b8; }
+body.light-mode .stat-blue  { background: rgba(59,130,246,0.05);  } body.light-mode .stat-blue  .num { color: #2563eb; }
+body.light-mode .stat-green { background: rgba(16,185,129,0.05);  } body.light-mode .stat-green .num { color: #059669; }
+body.light-mode .stat-amber { background: rgba(245,158,11,0.05);  } body.light-mode .stat-amber .num { color: #d97706; }
+body.light-mode .stat-red   { background: rgba(239,68,68,0.05);   } body.light-mode .stat-red   .num { color: #dc2626; }
+body.light-mode .stat-slate { background: rgba(100,116,139,0.05); } body.light-mode .stat-slate .num { color: #475569; }
+body.light-mode .stat-purple{ background: rgba(139,92,246,0.05);  } body.light-mode .stat-purple .num { color: #7c3aed; }
+body.light-mode .must-not { background: rgba(254,242,242,0.8); border-color: rgba(239,68,68,0.25); }
+body.light-mode .must-not h4 { color: #dc2626; }
+body.light-mode .must-not li { color: #334155; }
+body.light-mode .section-divider .sd-line { background: #e2e8f0; }
+body.light-mode .badge-blue { background: rgba(59,130,246,0.1); border-color: rgba(59,130,246,0.35); color: #2563eb; }
+body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: rgba(139,92,246,0.35); color: #7c3aed; }
+</style>
+</head>
+<body>
+
+<button class="theme-toggle" onclick="toggleTheme()" id="themeBtn">☀️ 淺色</button>
+
+<div class="page-header">
+  <h1>🤖 /objective — 自主執行路徑</h1>
+  <p class="subtitle">get-it-done · 全自動 autopilot × Batch-Aware Dispatcher × 自我循環直到 COMPLETE</p>
+  <div class="badges">
+    <span class="badge badge-blue">Autonomous Path</span>
+    <span class="badge badge-purple">v2 Batch-Aware Dispatcher</span>
+    <span class="badge badge-green">planner · analyst · executor · validator · reflector</span>
+  </div>
+</div>
+
+<div style="max-width:1400px; margin:0 auto 18px; display:flex; gap:10px; flex-wrap:wrap;">
+  <a href="blueprint.html" class="sm-link" style="margin-top:0">🧭 切換到 /blueprint 互動規劃路徑 →</a>
+  <a href="state-machine.html" class="sm-link" style="margin-top:0">⚙️ Dispatcher State Machine →</a>
+</div>
+
+<!-- ── Legend ── -->
+<div class="legend-wrapper">
+  <div class="legend">
+    <span class="legend-row-label">Phase</span>
+    <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>Dispatcher (/continue)</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div>PLANNING</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f59e0b"></div>ANALYZING</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ef4444"></div>EXECUTING</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#94a3b8"></div>REPORTING / COMPLETE</div>
+    <div class="legend-divider"></div>
+    <div class="legend-item"><div class="legend-dot round" style="background:#fbbf24"></div>User Checkpoint</div>
+  </div>
+  <div class="legend">
+    <span class="legend-row-label">Model</span>
+    <div class="legend-item"><span class="model-badge model-premium">claude-opus-4-7</span> 規劃／研究／反思（核心判斷）</div>
+    <div class="legend-item"><span class="model-badge model-standard">claude-sonnet-4-6</span> 執行／驗證／掃描（實作）</div>
+    <span style="margin-left:auto"></span>
+    <a href="state-machine.html" class="sm-link">⚙️ Autonomous State Machine（完整狀態轉移圖）→</a>
+  </div>
+</div>
+
+<div class="diagram">
+
+<!-- ══════════════════════ /objective ENTRY ══════════════════════ -->
+<div class="entry-row" style="grid-template-columns:1fr;">
+  <div class="entry-card entry-autonomous">
+    <div class="ec-cmd">/objective &lt;goal&gt;</div>
+    <div class="ec-name">自主執行路徑 (Autonomous Path) — 全自動 autopilot</div>
+    <div class="ec-desc">設定商業目標即啟動全自動 autopilot：bootstrap <code>.get-it-done/</code>、重設 v2 state schema，dispatcher 自我循環推進 PLANNING →（ANALYZING）→ EXECUTING → COMPLETE，全程無需人工逐步介入。</div>
+    <div class="ec-when">即便給的是抽象、高層次的需求，也能自動拆解 → 研究分析 → 逐步規劃 → 一路實作到完成。</div>
+  </div>
+</div>
+
+<!-- ── Shared downstream note ── -->
+<div class="info-note" style="max-width:1400px; margin:16px auto 0;">
+  🤝 <strong>/continue 是兩條路徑共用的執行引擎：</strong><code>/objective</code> 設定目標後直接呼叫 <code>/continue</code>；<code>/blueprint</code> 則先做互動規劃、凍結計畫後再呼叫 <code>/continue</code>（見 <a href="blueprint.html" style="color:#93c5fd;">blueprint.html</a>）。兩者匯流於同一個 dispatcher、同一套 <code>.get-it-done/</code> 狀態與下游 agents（analyst / executor / validator / reflector）。本頁聚焦 <strong>/objective</strong> 的全自動管線。
+</div>
+
+<!-- ══════════════════════ AUTONOMOUS SECTION ══════════════════════ -->
+<div class="section-divider sd-blue"><div class="sd-line"></div><span class="sd-text">自主執行管線　Dispatcher Loop　·　/blueprint 與 /objective 在此匯流</span><div class="sd-line"></div></div>
+
+<!-- ORCHESTRATOR -->
+<div class="orchestrator">
+  <div class="orch-left">
+    <h2>🎯 Dispatcher（/continue）— Batch-Aware Orchestrator</h2>
+    <p class="role">共享狀態的唯一寫入者 × 批次調度 × 階段路由 × 崩潰復原 × 不可違反 Policy 執行</p>
+    <div style="margin-bottom:10px"><span class="model-badge model-standard">main session（非 sub-agent）</span></div>
+    <div class="resp-tags">
+      <span class="resp-tag">Schema v2 檢查 ✦</span>
+      <span class="resp-tag">崩潰復原（3 sub-cases）✦</span>
+      <span class="resp-tag">DAG 預檢（self-ref / orphan / cycle）✦</span>
+      <span class="resp-tag">挑選 actionable batch（≤5 異質）</span>
+      <span class="resp-tag">原子 pre-write + claim</span>
+      <span class="resp-tag">單訊息平行 spawn sub-agents</span>
+      <span class="resp-tag">解析 agent-return YAML</span>
+      <span class="resp-tag">持久化 batch 結果</span>
+      <span class="resp-tag">決定下一階段</span>
+      <span class="resp-tag">自我循環直到終止狀態 ✦</span>
+    </div>
+    <a href="state-machine.html" class="sm-link">⚙️ Autonomous State Machine（完整狀態轉移圖）→</a>
+  </div>
+</div>
+
+<div class="v-connector"><div class="line"></div><div class="arrow">▼</div></div>
+
+<!-- ══════════════════════ PHASE: PLANNING ══════════════════════ -->
+<div class="phase phase-1">
+  <div class="phase-header">
+    <span class="phase-num">PLANNING</span>
+    <span class="phase-title">目標拆解（singleton N=1）</span>
+    <span class="phase-desc">將商業目標拆成 task DAG + 可量測驗收標準；可選擇性產出 PRD / research requests</span>
+  </div>
+
+  <div class="agents-row">
+    <div class="agent-card" style="max-width:340px">
+      <div class="agent-icon">📐</div>
+      <div class="agent-name">planner</div>
+      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="agent-role">目標 → 結構化 task DAG（含 milestones、Touches、Dependencies、PauseAfter），自我稽核 DAG 後回傳 next_phase_request</div>
+      <div class="skills-sep"></div>
+      <div class="skills-label">Writes</div>
+      <div class="write-item">task_queue.md</div>
+      <div class="write-item">metrics.md</div>
+      <div class="write-item">prd.md（選用）</div>
+      <div class="write-item">research_requests.md（選用）</div>
+    </div>
+
+    <div class="decision-gate">
+      <div class="decision-gate-node">
+        <strong>🔀 planner.next_phase_request</strong>
+        <div class="cond">需要研究？ / DAG 就緒？ / 目標已滿足？</div>
+      </div>
+      <div class="decision-branches">
+        <div class="decision-branch">
+          <div class="branch-connector"></div>
+          <div class="branch-label amber">ANALYZING</div>
+          <div class="branch-box amber">已寫 research_requests<br>→ 平行 analysts</div>
+        </div>
+        <div class="decision-branch">
+          <div class="branch-connector"></div>
+          <div class="branch-label yes">EXECUTING</div>
+          <div class="branch-box yes">DAG 就緒<br>→ executor / validator batch</div>
+        </div>
+        <div class="decision-branch">
+          <div class="branch-connector"></div>
+          <div class="branch-label no">REPORTING</div>
+          <div class="branch-box no">目標已滿足<br>（罕見）</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="info-note">
+    🤖 <strong>自主 <code>planner</code> ≠ 互動 <code>interactive-planner</code>：</strong>此階段由自主 <code>planner</code> 直接拆解，<strong>不</strong>走 /blueprint 的 A→B→C 使用者確認迴圈。即便目標抽象，planner 也可自行（必要時透過 ANALYZING 研究）拆解到可執行 —— /objective 的全自動性質即源於此。
+  </div>
+
+  <div class="data-output">
+    <span class="out-icon">📤</span>
+    Output → <code>task DAG</code> + <code>metrics（驗收標準）</code> + <code>next_phase_request</code>
+  </div>
+</div>
+
+<div class="v-connector"><div class="vlabel">若有 research_requests</div><div class="line"></div><div class="arrow">▼</div></div>
+
+<!-- ══════════════════════ PHASE: ANALYZING ══════════════════════ -->
+<div class="phase phase-2">
+  <div class="phase-header">
+    <span class="phase-num">ANALYZING</span>
+    <span class="phase-title">研究與領域分析（平行 N 個 analysts，一 RQ 一 analyst）</span>
+    <span class="phase-desc">同質 batch ≤5；每個 analyst 寫自己的 findings/RQ-X.md，寫面互斥 → 全部 fulfilled 後回 PLANNING</span>
+  </div>
+
+  <div class="parallel-group" data-label="∥ parallel batch ≤5（每 RQ 一 analyst）">
+    <div class="agent-card">
+      <div class="agent-icon">🔬</div>
+      <div class="agent-name">analyst <span style="color:#64748b">· RQ-1</span></div>
+      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="agent-role">回答一個 research request：市場 / 技術 / 競品研究</div>
+      <div class="skills-sep"></div>
+      <div class="write-item">findings/RQ-1.md</div>
+    </div>
+    <div class="agent-card">
+      <div class="agent-icon">🔬</div>
+      <div class="agent-name">analyst <span style="color:#64748b">· RQ-2</span></div>
+      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="agent-role">獨立回答另一個 RQ（PR-012 保證 RQ 間彼此獨立）</div>
+      <div class="skills-sep"></div>
+      <div class="write-item">findings/RQ-2.md</div>
+    </div>
+    <div class="agent-card" style="border-style:dashed; opacity:0.7">
+      <div class="agent-icon">🔬</div>
+      <div class="agent-name">analyst <span style="color:#64748b">· RQ-N</span></div>
+      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="agent-role">…最多 N=5 個平行</div>
+      <div class="skills-sep"></div>
+      <div class="write-item">findings/RQ-N.md</div>
+    </div>
+  </div>
+
+  <div class="info-note">
+    🔁 <strong>ANALYZING → PLANNING：</strong>所有 RQ 變成 <code>Status: fulfilled</code> 後，dispatcher 回到 PLANNING 讓 planner 帶著 findings 重新拆解 DAG。
+  </div>
+</div>
+
+<div class="v-connector"><div class="vlabel">DAG 就緒</div><div class="line"></div><div class="arrow">▼</div></div>
+
+<!-- ══════════════════════ PHASE: EXECUTING ══════════════════════ -->
+<div class="phase phase-3">
+  <div class="phase-header">
+    <span class="phase-num">EXECUTING</span>
+    <span class="phase-title">異質批次執行（Heterogeneous Batch，≤5）</span>
+    <span class="phase-desc">每 tick：P1 per-task validator → P2 milestone validator → P3 rework → P4 new executor（Touches 防碰撞）</span>
+  </div>
+
+  <div class="parallel-group" data-label="∥ heterogeneous batch ≤5（寫面互斥）">
+    <!-- validator (task) P1 -->
+    <div class="agent-card">
+      <div class="agent-icon">✅</div>
+      <div class="agent-name">validator <span style="color:#64748b">· task</span></div>
+      <div class="model-badge model-standard">claude-sonnet-4-6</div>
+      <div class="agent-role">P1 — 驗證 executed 任務（最快解鎖下游）。verdict pass→done / fail→needs_rework / escalate→blocked</div>
+      <div class="skills-sep"></div>
+      <div class="skills-label">寫面：無（verdict 在 agent-return）</div>
+    </div>
+    <!-- milestone validator P2 -->
+    <div class="agent-card">
+      <div class="agent-icon">🏁</div>
+      <div class="agent-name">validator <span style="color:#64748b">· milestone</span></div>
+      <div class="model-badge model-standard">claude-sonnet-4-6</div>
+      <div class="agent-role">P2 — milestone 全 done 後做整合驗證；fail 回傳 task_ids_to_rework；PauseAfter→planned pause</div>
+      <div class="skills-sep"></div>
+      <div class="skills-label">閘門：M_k 未 validated 前，M_{k+1} 任務不可啟動</div>
+    </div>
+    <!-- executor rework P3 -->
+    <div class="agent-card">
+      <div class="agent-icon">🔧</div>
+      <div class="agent-name">executor <span style="color:#64748b">· rework</span></div>
+      <div class="model-badge model-standard">claude-sonnet-4-6</div>
+      <div class="agent-role">P3 — 重做 needs_rework 任務（最舊優先，收斂停滯迴圈）</div>
+      <div class="skills-sep"></div>
+      <div class="write-item">workspace/exec-T-XXX/</div>
+    </div>
+    <!-- executor new P4 -->
+    <div class="agent-card">
+      <div class="agent-icon">⚙️</div>
+      <div class="agent-name">executor <span style="color:#64748b">· new</span></div>
+      <div class="model-badge model-standard">claude-sonnet-4-6</div>
+      <div class="agent-role">P4 — 實作 deps 全 done 且 Milestone==active_ms 的 pending 任務，產出 artifact</div>
+      <div class="skills-sep"></div>
+      <div class="write-item">workspace/exec-T-XXX/</div>
+    </div>
+  </div>
+
+  <div class="warning-note">
+    ⏸️ <strong>Milestone Gate：</strong>milestone 依狀態 <em>derived</em>（validating / pending / tasks_done / validated / blocked），下游 milestone 的任務必須等 active_ms 變 <code>validated</code> 才能啟動。
+  </div>
+  <div class="loop-note">
+    🔁 <strong>Rework Loop：</strong>validator <code>fail</code> 且未 escalate → 任務變 <code>needs_rework</code>，下個 tick 由 P3 rework executor 重做；<code>escalate_to_blocked</code> 或 milestone 結構性失敗 → <code>AWAITING_HUMAN</code>。
+  </div>
+  <div class="info-note">
+    🛡️ <strong>Touches 防碰撞：</strong>同 batch 內若兩個 executor 的 <code>Touches</code> 來源路徑重疊 → 後者 DEFER 到下個 batch（planner 規則 PR-013 在規劃時即把重疊任務設為 DAG 相依）。
+  </div>
+
+  <div class="data-output">
+    <span class="out-icon">📤</span>
+    Output → 每任務 <code>workspace/exec-T-XXX/</code> artifact + 更新 <code>task_queue.md</code> Status + 追加 <code>validation_log.md</code>
+  </div>
+</div>
+
+<div class="v-connector"><div class="vlabel">全任務 done + 全 milestone validated</div><div class="line"></div><div class="arrow">▼</div></div>
+
+<!-- ══════════════════════ PHASE: REPORTING / COMPLETE ══════════════════════ -->
+<div class="phase phase-0">
+  <div class="phase-header">
+    <span class="phase-num">REPORTING → COMPLETE</span>
+    <span class="phase-title">收尾與自我改善</span>
+    <span class="phase-desc">寫 [GOAL_COMPLETE] 摘要 → 翻 COMPLETE → 獨立 spawn reflector（不 gate 完成）</span>
+  </div>
+
+  <div class="agents-row">
+    <div class="agent-card" style="max-width:300px">
+      <div class="agent-icon">🎉</div>
+      <div class="agent-name">report_and_reflect()</div>
+      <div class="model-badge model-standard">dispatcher</div>
+      <div class="agent-role">讀 goal / task_queue / validation_log，寫 [GOAL_COMPLETE]（任務數、首過率、交付物），翻 phase=COMPLETE</div>
+      <div class="skills-sep"></div>
+      <div class="write-item">progress_log.md [GOAL_COMPLETE]</div>
+      <div class="write-item">state.md → COMPLETE</div>
+    </div>
+
+    <div class="agent-arrow-h">→</div>
+
+    <div class="agent-card" style="max-width:320px">
+      <div class="agent-icon">🪞</div>
+      <div class="agent-name">reflector</div>
+      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="agent-role">分析團隊表現（batch 動態、DAG 估算偏差），把 learnings 分流到正確通道並更新 agent rules。非 relay 的一環，獨立執行一次。</div>
+      <div class="skills-sep"></div>
+      <div class="skills-label">Learning channels</div>
+      <div class="write-item">A：跨專案 team_learnings/</div>
+      <div class="write-item">B：本專案 .get-it-done/context/</div>
+    </div>
+  </div>
+
+  <div class="data-output">
+    <span class="out-icon">📤</span>
+    Output → <code>phase: COMPLETE</code> + reflector 更新 A-side / B-side learnings（reflect 失敗只記 [REFLECT_FAIL]，不回滾 COMPLETE）
+  </div>
+</div>
+
+<!-- ── AWAITING_HUMAN checkpoint ── -->
+<div class="v-connector"><div class="line"></div><div class="arrow">▼</div></div>
+<div class="checkpoint-detail">
+  <div class="cp-title">⚡ 終止與人工介入點（Terminal &amp; Human Checkpoints）</div>
+  <div class="exit-options">
+    <div class="exit-opt primary">COMPLETE — 目標達成</div>
+    <div class="exit-opt warn">AWAITING_HUMAN — validator escalate / DAG 壞 / 相依死結 / milestone 結構失敗 → /adjust 修訂</div>
+    <div class="exit-opt purple">PLANNED_PAUSE — milestone PauseAfter:true（soft EXIT，下次 /continue 自動接續）</div>
+    <div class="exit-opt">CRASH_WAIT — planner singleton 剛崩潰，需等真實時間後重試 /continue</div>
+  </div>
+</div>
+
+</div><!-- end .diagram -->
+
+<!-- ── Stats Bar ── -->
+<div class="stats-bar">
+  <h3>📊 架構統計</h3>
+  <div class="stats-grid">
+    <div class="stat-card stat-blue"><div class="num">1</div><div class="label">Dispatcher（唯一狀態寫入者）</div></div>
+    <div class="stat-card stat-green"><div class="num">9</div><div class="label">Agents</div></div>
+    <div class="stat-card stat-amber"><div class="num">5</div><div class="label">Skills（slash commands）</div></div>
+    <div class="stat-card stat-red"><div class="num">7</div><div class="label">Phases（自主狀態機）</div></div>
+    <div class="stat-card stat-slate"><div class="num">5</div><div class="label">Batch 平行上限 N</div></div>
+    <div class="stat-card stat-purple"><div class="num">2</div><div class="label">學習通道（A 跨專案 / B 本專案）</div></div>
+  </div>
+</div>
+
+<!-- ── MUST NOT Policy ── -->
+<div class="must-not">
+  <h4>⛔ System-level MUST NOT Policy（Dispatcher 強制執行）</h4>
+  <ul>
+    <li>Sub-agents 編輯 state.md / progress_log.md / validation_log.md（唯一寫入者是 dispatcher）</li>
+    <li>Sub-agents 讀取同 batch 其他 peer 的 workspace / findings（寫面必須互斥）</li>
+    <li>Sub-agent 不輸出 ---agent-return--- YAML 區塊（缺則記 [BAD_RETURN]，視為崩潰重 spawn）</li>
+    <li>validator escalate_to_blocked:true 的任務被靜默重試（直接 AWAITING_HUMAN）</li>
+    <li>同 batch 兩 executor 的 Touches 來源路徑重疊（規劃期 PR-013 設為 DAG 相依）</li>
+    <li>對工單系統寫回（只讀 work item body + 驗收標準）</li>
+  </ul>
+</div>
+
+<script>
+  function toggleTheme() {
+    const body = document.body;
+    const btn = document.getElementById('themeBtn');
+    const isLight = body.classList.toggle('light-mode');
+    btn.textContent = isLight ? '🌙 深色' : '☀️ 淺色';
+    localStorage.setItem('gid-theme', isLight ? 'light' : 'dark');
+  }
+  (function() {
+    const saved = localStorage.getItem('gid-theme');
+    if (saved === 'light') {
+      document.body.classList.add('light-mode');
+      document.getElementById('themeBtn').textContent = '🌙 深色';
+    } else {
+      document.getElementById('themeBtn').textContent = '☀️ 淺色';
+    }
+  })();
+</script>
+</body>
+</html>

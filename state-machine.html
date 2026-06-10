@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>get-it-done — Autonomous Dispatcher State Machine</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #080c14;
+  color: #e2e8f0;
+  min-height: 100vh;
+  padding: 32px 24px 60px;
+}
+
+.page-header { text-align: center; margin-bottom: 28px; }
+.page-header h1 { font-size: 1.7rem; font-weight: 800; color: #fff; }
+.page-header .subtitle { color: #64748b; font-size: 0.86rem; margin-top: 6px; }
+
+.back-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: #3b82f6; font-size: 0.82rem; text-decoration: none;
+  margin-bottom: 20px; padding: 5px 12px;
+  background: rgba(59,130,246,0.08); border: 1px solid rgba(59,130,246,0.25);
+  border-radius: 8px; transition: background 0.2s;
+}
+.back-link:hover { background: rgba(59,130,246,0.16); }
+
+.legend-bar { max-width: 1100px; margin: 0 auto 24px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.legend-bar .title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: #334155; margin-right: 6px; }
+.leg { display: inline-flex; align-items: center; gap: 6px; font-size: 0.76rem; padding: 4px 10px; border-radius: 6px; border: 1px solid; }
+.leg-blue   { border-color: rgba(59,130,246,0.3);  background: rgba(59,130,246,0.07);  color: #93c5fd; }
+.leg-green  { border-color: rgba(16,185,129,0.3);  background: rgba(16,185,129,0.07);  color: #6ee7b7; }
+.leg-amber  { border-color: rgba(245,158,11,0.3);  background: rgba(245,158,11,0.07);  color: #fde68a; }
+.leg-red    { border-color: rgba(239,68,68,0.3);   background: rgba(239,68,68,0.07);   color: #fca5a5; }
+.leg-purple { border-color: rgba(139,92,246,0.3);  background: rgba(139,92,246,0.07);  color: #c4b5fd; }
+.leg-slate  { border-color: rgba(100,116,139,0.3); background: rgba(100,116,139,0.07); color: #94a3b8; }
+
+.diagram-wrapper {
+  max-width: 1100px; margin: 0 auto;
+  background: rgba(12,18,30,0.9); border: 1px solid #1e293b;
+  border-radius: 18px; padding: 32px 24px; overflow-x: auto;
+}
+.diagram-wrapper .mermaid { display: flex; justify-content: center; }
+
+/* sub-machine note cards */
+.note-grid { max-width: 1100px; margin: 28px auto 0; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.note-card { background: rgba(15,23,42,0.7); border: 1px solid #1e293b; border-radius: 12px; padding: 14px 18px; }
+.note-card h4 { font-size: 0.78rem; font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.note-card.crash h4 { color: #fca5a5; }
+.note-card.batch h4 { color: #93c5fd; }
+.note-card.pause h4 { color: #c4b5fd; }
+.note-card.derive h4 { color: #fde68a; }
+.note-card ul { list-style: none; }
+.note-card li { font-size: 0.74rem; color: #94a3b8; padding: 3px 0 3px 16px; position: relative; line-height: 1.5; }
+.note-card li::before { content: '›'; position: absolute; left: 4px; color: #475569; }
+.note-card code { font-family: 'Cascadia Code', monospace; font-size: 0.7rem; color: #7dd3fc; background: rgba(59,130,246,0.08); padding: 1px 5px; border-radius: 3px; }
+
+.ref-section { max-width: 1100px; margin: 28px auto 0; }
+.ref-section h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.12em; color: #334155; margin-bottom: 14px; font-weight: 600; }
+.ref-table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+.ref-table th { background: rgba(30,41,59,0.8); color: #64748b; text-align: left; padding: 7px 12px; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; border-bottom: 1px solid #1e293b; }
+.ref-table td { padding: 7px 12px; border-bottom: 1px solid #0f172a; vertical-align: top; color: #94a3b8; }
+.ref-table tr:hover td { background: rgba(30,41,59,0.4); }
+.ref-table code { font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.7rem; color: #7dd3fc; background: rgba(59,130,246,0.08); padding: 1px 5px; border-radius: 3px; }
+.from-state { color: #e2e8f0; font-weight: 600; font-family: 'Cascadia Code', monospace; font-size: 0.7rem; }
+.to-state   { color: #7dd3fc; font-family: 'Cascadia Code', monospace; font-size: 0.7rem; }
+.trigger    { color: #fde68a; }
+.guard-green { color: #6ee7b7; }
+.guard-red   { color: #f87171; }
+.guard-amber { color: #fbbf24; }
+.badge-phase { display: inline-block; border-radius: 4px; padding: 1px 7px; font-size: 0.64rem; font-weight: 700; margin-right: 4px; }
+.ph-plan { background: rgba(16,185,129,0.15); color: #34d399; }
+.ph-anal { background: rgba(245,158,11,0.15); color: #fbbf24; }
+.ph-exec { background: rgba(239,68,68,0.15);  color: #f87171; }
+.ph-rep  { background: rgba(100,116,139,0.2); color: #94a3b8; }
+.ph-any  { background: rgba(139,92,246,0.15); color: #c4b5fd; }
+</style>
+</head>
+<body>
+
+<div style="max-width:1100px; margin:0 auto;">
+  <a class="back-link" href="objective.html">← 返回 /objective 自主執行路徑</a>
+  <a class="back-link" href="blueprint.html" style="margin-left:8px;">🧭 /blueprint 互動規劃路徑</a>
+</div>
+
+<div class="page-header">
+  <h1>⚙️ Autonomous Dispatcher State Machine</h1>
+  <p class="subtitle">/continue 自主調度器完整狀態轉移圖（schema v2 · batch-aware · 含崩潰復原與軟暫停）</p>
+</div>
+
+<div class="legend-bar">
+  <span class="title">Legend</span>
+  <span class="leg leg-green">PLANNING</span>
+  <span class="leg leg-amber">ANALYZING</span>
+  <span class="leg leg-red">EXECUTING</span>
+  <span class="leg leg-slate">REPORTING / COMPLETE / IDLE</span>
+  <span class="leg leg-purple">🔁 回退 / 軟暫停</span>
+  <span class="leg leg-blue">⏸ AWAITING_HUMAN</span>
+</div>
+
+<div class="diagram-wrapper">
+  <div class="mermaid">
+stateDiagram-v2
+    direction TB
+
+    [*] --> IDLE
+
+    state "💤 IDLE\n無活躍目標，等待 /objective" as IDLE
+    state "📐 PLANNING\nplanner 拆解 task DAG（N=1 singleton）" as PLANNING
+    state "🔬 ANALYZING\n平行 analysts，一 RQ 一 analyst（≤5）" as ANALYZING
+    state "⚙️ EXECUTING\n異質 batch：executor / validator / rework（≤5）" as EXECUTING
+    state "🏁 milestone_gate\nM_k 未 validated 前，M_{k+1} 任務不可啟動" as milestone_gate
+    state "🎉 REPORTING\n寫 [GOAL_COMPLETE] 摘要" as REPORTING
+    state "✅ COMPLETE\n全任務 done；獨立 spawn reflector" as COMPLETE
+    state "⏸️ AWAITING_HUMAN\nblocker：escalate / DAG / 死結 / 結構失敗" as AWAITING_HUMAN
+    state "🟣 PLANNED_PAUSE\nsoft EXIT（phase 仍 EXECUTING）" as PLANNED_PAUSE
+
+    IDLE --> PLANNING : /objective（goal_set=true）
+
+    PLANNING --> ANALYZING : planner 寫了 research_requests
+    PLANNING --> EXECUTING : task_queue + metrics 就緒 AND DAG 通過
+    PLANNING --> REPORTING : 目標已滿足（罕見）
+    PLANNING --> AWAITING_HUMAN : DAG 壞（self-ref / orphan / cycle）
+
+    ANALYZING --> PLANNING : 全 RQ Status=fulfilled（planner 重跑）
+
+    EXECUTING --> EXECUTING : 下個 batch（mix validator / executor / rework）
+    EXECUTING --> milestone_gate : milestone tasks 全 done
+    milestone_gate --> EXECUTING : milestone validator pass（解鎖下游）
+    milestone_gate --> EXECUTING : fail → task_ids_to_rework 設 needs_rework
+    milestone_gate --> PLANNED_PAUSE : pass AND PauseAfter=true
+    milestone_gate --> AWAITING_HUMAN : 結構性失敗（無 rework 路徑）/ escalate
+    PLANNED_PAUSE --> EXECUTING : 使用者下次 /continue（接續下游 milestone）
+
+    EXECUTING --> REPORTING : 全任務 done AND 全 milestone validated
+    EXECUTING --> AWAITING_HUMAN : validator escalate_to_blocked / 相依死結
+
+    REPORTING --> COMPLETE : dispatcher 寫 [GOAL_COMPLETE] + spawn reflector
+    COMPLETE --> IDLE : 下一個 /objective 清除
+    AWAITING_HUMAN --> PLANNING : 人工解 block（/adjust 或編輯 state.md）
+
+    COMPLETE --> [*]
+  </div>
+</div>
+
+<!-- ── Sub-machine notes ── -->
+<div class="note-grid">
+  <div class="note-card crash">
+    <h4>💥 崩潰復原（Step 2 — status=RUNNING AND batch_ended_at=null）</h4>
+    <ul>
+      <li><strong>Sub-case 0：</strong>PLANNING singleton 崩潰 — &lt;5min 視為仍在工作（<code>[CRASH_WAIT]</code> 退出等待）；≥5min 視為超時，重啟 PLANNING（<code>[CRASH_DETECTED]</code>）。</li>
+      <li><strong>Sub-case A：</strong><code>claimed_set</code> 非空 — sub-agents 已 spawn 但結果未持久化，用相同 id 重 spawn（Attempts 未增、scratch 以 task_id 為鍵、findings 乾淨覆寫，re-spawn 安全）。</li>
+      <li><strong>Sub-case B：</strong><code>claimed_set</code> 為空 — 結果已持久化但 batch envelope 未關閉，清理殘留 Claimed_by 並補關 batch。</li>
+    </ul>
+  </div>
+  <div class="note-card derive">
+    <h4>🏁 Milestone 狀態派生（無持久化 Status 欄位，每 tick 重算）</h4>
+    <ul>
+      <li><code>validating</code> — M.Claimed_by != null</li>
+      <li><code>pending</code> — M.Tasks 內任一任務 Status != done</li>
+      <li><code>tasks_done</code> — 全 done、無 validator in flight、且無 VR 或最近 VR 為 fail 未 escalate</li>
+      <li><code>validated</code> — 最近 VR verdict == pass（解鎖下游 milestone）</li>
+      <li><code>blocked</code> — 最近 VR escalate_to_blocked == true</li>
+    </ul>
+  </div>
+  <div class="note-card batch">
+    <h4>⚙️ EXECUTING 批次優先序（greedy，單 tick，異質 ≤5）</h4>
+    <ul>
+      <li><strong>P1</strong> per-task validator — drain <code>executed</code>（最快解鎖下游 pending）</li>
+      <li><strong>P2</strong> milestone validator — <code>tasks_done</code> 的 milestone</li>
+      <li><strong>P3</strong> rework executor — <code>needs_rework</code>（最舊優先）</li>
+      <li><strong>P4</strong> new executor — deps 全 done 且 Milestone==active_ms 的 pending</li>
+      <li>寫面互斥才同 batch；Touches 重疊則 <code>[DEFER]</code> 到下個 batch。</li>
+    </ul>
+  </div>
+  <div class="note-card pause">
+    <h4>🟣 軟暫停 PLANNED_PAUSE（非 phase，是 soft exit reason）</h4>
+    <ul>
+      <li>milestone validator 對 <code>PauseAfter:true</code> 的 milestone 回 pass 時觸發。</li>
+      <li>寫 <code>[PLANNED_PAUSE]</code> 到 progress_log 後乾淨 EXIT。</li>
+      <li>phase 維持 <code>EXECUTING</code>、status <code>WAITING</code> — 不需手動 unblock。</li>
+      <li>使用者下次 <code>/continue</code> 自然接續下一個下游 milestone。</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Transition Reference Table -->
+<div class="ref-section">
+  <h3>📋 完整轉移清單（Transition Reference）</h3>
+  <table class="ref-table">
+    <thead>
+      <tr>
+        <th>Phase</th>
+        <th>From State</th>
+        <th>To State</th>
+        <th>觸發條件（Trigger / Guard）</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge-phase ph-rep">ENTRY</span></td>
+        <td><span class="from-state">IDLE</span></td>
+        <td><span class="to-state">PLANNING</span></td>
+        <td class="trigger">/objective &lt;goal&gt;（<code>goal_set = true</code>）</td>
+      </tr>
+      <!-- PLANNING -->
+      <tr>
+        <td><span class="badge-phase ph-plan">PLAN</span></td>
+        <td><span class="from-state">PLANNING</span></td>
+        <td><span class="to-state">ANALYZING</span></td>
+        <td class="trigger">planner 寫了 <code>research_requests</code>（next_phase_request=ANALYZING）</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-plan">PLAN</span></td>
+        <td><span class="from-state">PLANNING</span></td>
+        <td><span class="to-state">EXECUTING</span></td>
+        <td class="guard-green">task_queue + metrics 就緒 AND DAG 驗證通過</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-plan">PLAN</span></td>
+        <td><span class="from-state">PLANNING</span></td>
+        <td><span class="to-state">REPORTING</span></td>
+        <td class="trigger">planner 判定目標已滿足（罕見，next_phase_request=REPORTING）</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-plan">PLAN</span></td>
+        <td><span class="from-state">PLANNING</span></td>
+        <td><span class="to-state">AWAITING_HUMAN</span></td>
+        <td class="guard-red">Step 4 DAG 預檢失敗（self-ref / orphan / cycle）→ <code>[BAD_DAG]</code></td>
+      </tr>
+      <!-- ANALYZING -->
+      <tr>
+        <td><span class="badge-phase ph-anal">ANAL</span></td>
+        <td><span class="from-state">ANALYZING</span></td>
+        <td><span class="to-state">ANALYZING</span></td>
+        <td class="trigger">仍有 open RQ → 下個同質 batch（每 RQ 一 analyst，≤5）</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-anal">ANAL</span></td>
+        <td><span class="from-state">ANALYZING</span></td>
+        <td><span class="to-state">PLANNING</span></td>
+        <td class="guard-green">所有 RQ <code>Status: fulfilled</code> → planner 帶 findings 重跑</td>
+      </tr>
+      <!-- EXECUTING -->
+      <tr>
+        <td><span class="badge-phase ph-exec">EXEC</span></td>
+        <td><span class="from-state">EXECUTING</span></td>
+        <td><span class="to-state">EXECUTING</span></td>
+        <td class="trigger">pool 非空 → 下個異質 batch（P1 val → P2 mval → P3 rework → P4 new）</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-exec">EXEC</span></td>
+        <td><span class="from-state">EXECUTING</span></td>
+        <td><span class="to-state">EXECUTING</span></td>
+        <td class="guard-amber">validator fail 且未 escalate → 任務 <code>needs_rework</code>，下 tick P3 重做</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-exec">EXEC</span></td>
+        <td><span class="from-state">milestone validator pass</span></td>
+        <td><span class="to-state">EXECUTING</span></td>
+        <td class="guard-green">milestone <code>validated</code> → 下游 milestone 任務於下 tick 變 eligible</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-exec">EXEC</span></td>
+        <td><span class="from-state">milestone validator pass</span></td>
+        <td><span class="to-state">PLANNED_PAUSE</span></td>
+        <td class="guard-amber">milestone <code>PauseAfter: true</code> → soft EXIT（phase 仍 EXECUTING）</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-any">SOFT</span></td>
+        <td><span class="from-state">PLANNED_PAUSE</span></td>
+        <td><span class="to-state">EXECUTING</span></td>
+        <td class="trigger">使用者下次 <code>/continue</code> → 自然接續下一個下游 milestone</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-exec">EXEC</span></td>
+        <td><span class="from-state">milestone validator fail</span></td>
+        <td><span class="to-state">EXECUTING</span></td>
+        <td class="guard-amber"><code>task_ids_to_rework</code> 非空 → 列出任務設 needs_rework</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-exec">EXEC</span></td>
+        <td><span class="from-state">milestone validator fail</span></td>
+        <td><span class="to-state">AWAITING_HUMAN</span></td>
+        <td class="guard-red">結構性失敗（task_ids_to_rework 空）→ <code>[BAD_MILESTONE]</code>，保留證據待人工</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-exec">EXEC</span></td>
+        <td><span class="from-state">EXECUTING</span></td>
+        <td><span class="to-state">AWAITING_HUMAN</span></td>
+        <td class="guard-red">validator <code>escalate_to_blocked: true</code> / 相依或 milestone 死結 → <code>[BLOCKER]</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-exec">EXEC</span></td>
+        <td><span class="from-state">EXECUTING</span></td>
+        <td><span class="to-state">REPORTING</span></td>
+        <td class="guard-green">全任務 <code>done</code> AND 全 milestone <code>validated</code></td>
+      </tr>
+      <!-- REPORTING / terminal -->
+      <tr>
+        <td><span class="badge-phase ph-rep">REP</span></td>
+        <td><span class="from-state">REPORTING</span></td>
+        <td><span class="to-state">COMPLETE</span></td>
+        <td class="trigger">dispatcher 寫 <code>[GOAL_COMPLETE]</code> 並獨立 spawn reflector（不 gate 完成）</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-rep">TERM</span></td>
+        <td><span class="from-state">COMPLETE</span></td>
+        <td><span class="to-state">IDLE</span></td>
+        <td class="trigger">下一個 <code>/objective</code> 清除</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-any">ANY</span></td>
+        <td><span class="from-state">AWAITING_HUMAN</span></td>
+        <td><span class="to-state">previous-phase</span></td>
+        <td class="guard-amber">人工解 block（<code>/adjust</code> 或編輯 state.md phase）</td>
+      </tr>
+      <tr>
+        <td><span class="badge-phase ph-rep">TERM</span></td>
+        <td><span class="from-state">COMPLETE</span></td>
+        <td><span class="to-state">[END]</span></td>
+        <td class="trigger">[GOAL_COMPLETE] 顯示完畢，dispatcher EXIT</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    themeVariables: {
+      background: '#0c1220',
+      primaryColor: '#1e293b',
+      primaryTextColor: '#e2e8f0',
+      primaryBorderColor: '#334155',
+      lineColor: '#475569',
+      secondaryColor: '#0f172a',
+      tertiaryColor: '#0c1220',
+      edgeLabelBackground: '#0f172a',
+      fontFamily: 'Segoe UI, sans-serif',
+      fontSize: '13px'
+    },
+    stateDiagram: { diagramPadding: 20 }
+  });
+</script>
+</body>
+</html>

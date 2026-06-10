@@ -10,7 +10,7 @@
 ```
 Interactive Path                    Autonomous Path
 ─────────────────                   ─────────────────
-/plan                               /objective <goal>
+/blueprint                          /objective <goal>
   │                                   │
   ▼                                   ▼
 A–C (planning)                      PLANNING phase
@@ -23,9 +23,9 @@ A–C (planning)                      PLANNING phase
 COMPLETE / AWAITING_HUMAN / PLANNED_PAUSE
 ```
 
-The **interactive path** (`/plan`) produces a frozen human-reviewed plan before handing off to the autonomous dispatcher. Use it when requirements are ambiguous or implementation decisions need user input.
+The **interactive path** (`/blueprint`) produces a frozen human-reviewed plan before handing off to the autonomous dispatcher. Use it when you want to be in the loop — review and confirm scope and implementation decisions round by round before any execution starts.
 
-The **autonomous path** (`/objective`) goes straight to autonomous planning and execution. Use it when the goal is clear and you trust the planner to decompose it correctly.
+The **autonomous path** (`/objective`) is full autopilot: even from an abstract, high-level goal it decomposes → researches → progressively plans → executes all the way to completion, with the dispatcher self-looping and no step-by-step human intervention required. The two paths differ by whether you want to review the plan first, not by how clear the goal is.
 
 ---
 
@@ -97,7 +97,7 @@ EXECUTING: dispatcher batch per tick
 
 | Agent | Path | Role |
 |-------|------|------|
-| `interactive-planner` | `/plan` skill | Interactive A→B→C planning with user |
+| `interactive-planner` | `/blueprint` skill | Interactive A→B→C planning with user |
 | `scope-scanner` | Spawned by interactive-planner | Method-level codebase scope inventory |
 | `scope-verifier` | Spawned by scope-scanner | Validates scanner output (max 3 loops) |
 | `plan-reviewer` | After C3 | Audits frozen plan completeness |
@@ -114,7 +114,7 @@ EXECUTING: dispatcher batch per tick
 
 | Step | Entry Condition | Output | Agent | Next |
 |------|-----------------|--------|-------|------|
-| A1 | User triggers /plan | Raw requirement | interactive-planner | B1 |
+| A1 | User triggers /blueprint | Raw requirement | interactive-planner | B1 |
 | B1 | Have requirement | Planning doc skeleton + confirmed requirements | interactive-planner | B2 (user confirm) |
 | B2 | B1 confirmed | Method-level change scope in plan doc | scope-scanner + scope-verifier | B3 (user confirm) |
 | B3 | B2 confirmed | Discussion outcomes + implementation direction | interactive-planner | B4 (user confirm) |
