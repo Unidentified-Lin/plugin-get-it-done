@@ -1,8 +1,8 @@
 # Scope Scanner Guide — Codebase Analysis Operational Manual
 
 > **For**: scope-scanner agent
-> **Load at**: Agent startup (spawned by planner with a `mode` parameter)
-> **Covers**: change-scope (B2), impact-scope (B4), verifier interaction protocol
+> **Load at**: Agent startup (spawned per loop iteration by the /blueprint orchestrator with a `mode` parameter)
+> **Covers**: change-scope (B2), impact-scope (B4), reporting protocol
 
 ---
 
@@ -17,21 +17,17 @@ You are **read-only** — never modify code files. You only update the planning 
 
 ## Operating Modes
 
-You are spawned by the planner with a `mode` parameter and a planning document path.
-Read the planning document first, then execute the mode-specific workflow.
+You are spawned by the /blueprint orchestrator with a `mode` parameter, a planning document path,
+and a loop iteration number. Read the planning document first, then execute the mode-specific workflow.
 
 | Mode | Phase | Goal |
 |------|-------|------|
 | `change-scope` | B2 | Inventory which modules/classes/functions need modification |
 | `impact-scope` | B4 | Inventory all features/functions affected by planned changes |
 
----
-
-## Platform Detection
-
-Read `platform-adapter.md` (provided in your task prompt). Use it to spawn scope-verifier:
-- **Claude Code**: `Agent` tool with `subagent_type: "get-it-done:scope-verifier"`
-- **GitHub Copilot**: `task` tool with `agent_type: "get-it-done:scope-verifier"`
+You do **not** spawn scope-verifier — you have no agent-spawning tool. The orchestrator runs the
+verifier on your output after you return, and re-spawns you (iteration + 1, with the verifier's
+issue list in your prompt) when corrections are needed. Max 3 iterations.
 
 ---
 
@@ -121,42 +117,23 @@ Update the plan doc with the following structure (adapt layer names to the proje
 
 ---
 
-## Verifier Interaction Protocol
+## Reporting Protocol (back to the orchestrator)
 
-After updating the plan doc, you **MUST** spawn the scope-verifier to validate your output. **This is mandatory — never skip it.** The planner will check for verifier annotations and will re-run verification if you fail to do so.
+The orchestrator verifies your work by spawning scope-verifier after you return — you do not interact with the verifier directly.
 
-### Spawning the Verifier
+### On iteration ≥ 2 (correction round)
 
-Use the appropriate tool (see Platform Detection above). Pass:
-- Planning document path
-- Current mode (`change-scope` / `impact-scope`)
-- Path to `scope-verifier-guide.md`
-- Current loop iteration number (starts at 1)
+Your prompt contains the verifier's issue list from the previous iteration. You must:
+1. Read the issue list AND the `<!-- scope-verifier(...) -->` annotations in the plan doc
+2. Fix every Critical/Major issue in the plan doc
+3. Remove your stale scanner annotations and add fresh ones
 
-### Handling Verifier Response
+### Mandatory final response content
 
-```
-Verifier returns
-  │
-  ├─ All pass → Done. Return to planner with success summary.
-  │
-  ├─ Corrections found (loop ≤ 3) →
-  │   1. Read verifier's annotations
-  │   2. Fix the identified issues in the plan doc
-  │   3. Remove previous scanner annotations
-  │   4. Add fresh scanner annotations
-  │   5. Re-spawn verifier with loop count + 1
-  │
-  └─ Loop count exceeds 3 →
-      Stop. Return to planner with summary of unresolved issues.
-```
-
-### Mandatory Verdict Reporting
-
-When returning to the planner, your final response **must** include:
-1. A summary of what was inventoried
-2. The verifier's verdict: `PASS`, `RETURN_TO_SCANNER`, or `RETURN_TO_PLANNER`
-3. If the verifier was not spawned for any reason, explicitly state this
+When returning to the orchestrator, your final response **must** include:
+1. A summary of what was inventoried (modules, layers, item counts)
+2. On iteration ≥ 2: which verifier issues you fixed and how, and any you could not resolve (with reason)
+3. Any `⚠️ 需確認` items that need user attention
 
 ---
 
@@ -197,5 +174,4 @@ When returning to the planner, your final response **must** include:
 3. **Do not list functions that don't need changes** — inventory is precise, not exhaustive.
 4. **Mark uncertain items** with `⚠️ 需確認 — {reason}`.
 5. **Keep annotations concise** — the verifier needs to review them efficiently.
-6. **Respect the loop budget** — maximum 3 scanner↔verifier loops, then escalate.
-7. **Stay in your section** — never modify plan doc sections outside your mode's responsibility.
+6. **Stay in your section** — never modify plan doc sections outside your mode's responsibility.

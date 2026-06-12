@@ -1,6 +1,6 @@
 # Task Breakdown Guide — C1, C2, C3 Rules
 
-> **For**: planner agent
+> **For**: the /blueprint orchestrator (main conversation)
 > **Load at**: Entering C phase (after B4 confirmed)
 > **Covers**: C1 framework confirmation, C2 task fill, C3 freeze + get-it-done handoff
 
@@ -159,6 +159,7 @@ Write `.get-it-done/task_queue.md` with all tasks in v2 DAG format. Use the sche
 ### T-{n:03d}: {Task Title}
 
 **Type**: code
+**Priority**: medium
 **Milestone**: M1
 **Status**: pending
 **Attempts**: 0
@@ -168,13 +169,13 @@ Write `.get-it-done/task_queue.md` with all tasks in v2 DAG format. Use the sche
 **Dependencies**: []
 **Touches**: ["{file-path-1}", "{file-path-2}"]
 **Validation Results**: []
+**Created**: {ISO timestamp}
 
 #### Description
 {task description from task file}
-
-#### Acceptance Criteria
-- [ ] {From task file 驗證方式}
 ```
+
+Do NOT duplicate acceptance criteria inside task_queue.md — `.get-it-done/metrics.md` is the **single source of truth** for criteria (validators read it by stable criterion ID; a second copy here would inevitably drift).
 
 Map tasks to milestones logically (group related tasks into 2–5 milestones). Set `Dependencies` based on the ordering you established in the task list. The `Touches` list should match the `檔案路徑` from each task file.
 

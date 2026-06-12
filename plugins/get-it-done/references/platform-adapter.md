@@ -30,12 +30,14 @@ echo "${CLAUDE_PLUGIN_ROOT}"
 
 ### GitHub Copilot — macOS / Linux
 ```bash
-find "$HOME/.copilot" -type d -name "get-it-done" 2>/dev/null | head -1
+# Most recently modified wins — multiple cached plugin versions may coexist
+ls -td $(find "$HOME/.copilot" -type d -name "get-it-done" 2>/dev/null) 2>/dev/null | head -1
 ```
 
 ### GitHub Copilot — Windows (PowerShell)
 ```powershell
-Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+# Most recently modified wins — multiple cached plugin versions may coexist
+Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 ```
 
 ---
@@ -167,22 +169,53 @@ rsync -a --ignore-existing "${PLUGIN_ROOT}/templates/.get-it-done/" .get-it-done
 ```powershell
 # A — cross-project learnings
 robocopy "${PLUGIN_ROOT}\templates\team_learnings" "${PLUGIN_DATA}\team_learnings" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy failed with code $LASTEXITCODE" }
 
 # B — per-project state
 robocopy "${PLUGIN_ROOT}\templates\.get-it-done" ".get-it-done" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy failed with code $LASTEXITCODE" }
+$global:LASTEXITCODE = 0
 ```
 
 `robocopy` flags: `/E` = include subdirs, `/XC /XN /XO` = skip if dest is same/newer/older (i.e., skip existing), `/NFL /NDL /NJH /NJS` = suppress output.
 
+⚠️ **robocopy exit-code gotcha**: robocopy returns **1–7 on success** (1 = files copied, 2 = extra files, etc.) and ≥8 only on real failure. `| Out-Null` does not reset `$LASTEXITCODE`, so a harness that treats non-zero as failure will mis-read a successful copy. Always follow robocopy with the `-ge 8` check + `$global:LASTEXITCODE = 0` normalization shown above.
+
 ---
 
-## 8. Quick Decision Table
+## 8. Asking the User — sub-agent limitation
+
+`AskUserQuestion` / `ask_user` only reach the user from the **main conversation**. Sub-agents spawned via `Agent` / `task` are non-interactive — their questions are never surfaced; the spawn returns only their final output. Therefore:
+
+- Any step that needs user confirmation (e.g. /blueprint B1/B3/C loops) must run in the main conversation.
+- Sub-agents that hit a decision they cannot make must **return** with the question in their final response and let the orchestrator ask the user.
+
+---
+
+## 9. Invoke Another Skill
+
+### Claude Code
+Use the `Skill` tool:
+```
+Skill(skill: "continue")            # or "get-it-done:continue" on name collision
+```
+
+### GitHub Copilot
+There is no Skill tool. Read the target skill's `SKILL.md` from the plugin root and execute its instructions inline in the current session:
+```
+{plugin-root}/skills/<name>/SKILL.md
+```
+
+---
+
+## 10. Quick Decision Table
 
 | Operation | Claude Code | Copilot (macOS/Linux) | Copilot (Windows) |
 |-----------|------------|----------------------|-------------------|
-| Plugin root | `${CLAUDE_PLUGIN_ROOT}` | `find $HOME/.copilot -name get-it-done` | `Get-ChildItem $HOME\.copilot` |
+| Plugin root | `${CLAUDE_PLUGIN_ROOT}` | `ls -td $(find $HOME/.copilot -name get-it-done) \| head -1` | `Get-ChildItem ... \| Sort LastWriteTime -Desc` |
 | Data dir | `${CLAUDE_PLUGIN_DATA}/team_learnings/` | `~/.copilot/data/get-it-done/team_learnings/` | `$HOME\.copilot\data\get-it-done\team_learnings\` |
 | Spawn agent | `Agent` tool | `task` tool | `task` tool |
-| Ask user | `AskUserQuestion` | `ask_user` | `ask_user` |
+| Ask user (main conversation only) | `AskUserQuestion` | `ask_user` | `ask_user` |
+| Invoke skill | `Skill` tool | read SKILL.md, run inline | read SKILL.md, run inline |
 | Open in browser | `open "file://..."` | `open "file://..."` | `Start-Process chrome ...` |
-| Bootstrap | `rsync -a --ignore-existing` | `rsync -a --ignore-existing` | `robocopy /E /XC /XN /XO` |
+| Bootstrap | `rsync -a --ignore-existing` | `rsync -a --ignore-existing` | `robocopy /E /XC /XN /XO` + exit-code normalize |

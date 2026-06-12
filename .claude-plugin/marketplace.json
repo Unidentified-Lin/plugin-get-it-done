@@ -8,7 +8,7 @@
     {
       "name": "get-it-done",
       "source": "./plugins/get-it-done",
-      "description": "Unified development workflow: interactive planning (/plan) with scope analysis + autonomous execution (/continue). Five skills: /plan, /objective, /continue, /adjust, /review. Cross-platform: Claude Code (macOS/Linux) and GitHub Copilot (Windows/macOS)."
+      "description": "Unified development workflow: interactive planning (/blueprint) with scope analysis + autonomous execution (/continue). Five skills: /blueprint, /objective, /continue, /adjust, /review. Cross-platform: Claude Code (macOS/Linux) and GitHub Copilot (Windows/macOS)."
     }
   ]
 }

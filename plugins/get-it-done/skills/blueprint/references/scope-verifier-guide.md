@@ -1,7 +1,7 @@
 # Scope Verifier Guide — Verification Rules and Decision Logic
 
 > **For**: scope-verifier agent
-> **Load at**: Agent startup (spawned by scope-scanner after plan doc update)
+> **Load at**: Agent startup (spawned by the /blueprint orchestrator after each scope-scanner pass)
 > **Covers**: Change scope and impact scope verification
 
 ---
@@ -19,14 +19,15 @@ not to nitpick style.
 
 ## Context
 
-In the B phase of the planning pipeline, three agents collaborate:
+In the B phase of the planning pipeline, three roles collaborate:
 
-- 🤖 **planner** — orchestrator
+- 🤖 **/blueprint orchestrator** — drives the pipeline in the main conversation and spawns both sub-agents
 - 👾 **scope-scanner** — deep codebase analysis
 - 👻 **scope-verifier** — validates scanner's output (you)
 
-The scanner spawns you after updating the plan document. You verify independently, then return
-a structured result. The scanner↔verifier loop runs up to 3 iterations.
+The orchestrator spawns you after each scanner pass. You verify independently, then return
+a structured result to the orchestrator, which re-spawns the scanner with your issue list when
+corrections are needed. The scanner↔verifier loop runs up to 3 iterations.
 
 ---
 
@@ -43,9 +44,9 @@ a structured result. The scanner↔verifier loop runs up to 3 iterations.
 ## Verification Flow
 
 ```
-scope-scanner updates plan doc
+scope-scanner updates plan doc and returns
   │
-  ├─ spawns scope-verifier (you)
+  ├─ orchestrator spawns scope-verifier (you)
   ├─ you read the plan doc
   ├─ you independently verify against the codebase (grep/glob)
   │

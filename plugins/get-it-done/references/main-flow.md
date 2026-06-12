@@ -37,27 +37,30 @@ A. Input
         │
         ▼
 B. Planning Document (progressively filled)
-   🤖 interactive-planner  👾 scope-scanner  👻 scope-verifier
+   🤖 /blueprint orchestrator (MAIN conversation — user loops need AskUserQuestion)
+   👾 scope-scanner  👻 scope-verifier (non-interactive sub-agents)
 
    B1. Requirement confirmation loop 🤖
         a. Create planning document skeleton
         b. Refine requirements, define scope
         c. Confirm with user ←── Loop ①
 
-   B2. Change scope inventory 👾↔👻 → 🤖
-        a. Spawn scope-scanner (mode: change-scope)
-        b. scope-scanner spawns scope-verifier (max 3 loops)
-        c. Planner presents scope → user confirms ←── Loop ②
+   B2. Change scope inventory 🤖→👾→👻 (orchestrator-driven, max 3 iterations)
+        a. Orchestrator spawns scope-scanner (mode: change-scope, iteration k)
+        b. Orchestrator spawns scope-verifier on the result
+        c. Issues → re-spawn scanner with issue list; PASS → present scope
+        d. User confirms ←── Loop ②
 
    B3. Implementation direction 🤖
         a. Generate discussion list
         b. Discuss topics one by one ←── Loop ③ (per topic)
         c. User confirms direction ←── Loop ④
 
-   B4. Impact scope inventory 👾↔👻 → 🤖
-        a. Spawn scope-scanner (mode: impact-scope)
-        b. scope-scanner spawns scope-verifier (max 3 loops)
-        c. Planner presents impact → user confirms ←── Loop ⑤
+   B4. Impact scope inventory 🤖→👾→👻 (same orchestrator-driven loop)
+        a. Orchestrator spawns scope-scanner (mode: impact-scope, iteration k)
+        b. Orchestrator spawns scope-verifier on the result
+        c. Issues → re-spawn scanner; PASS → present impact
+        d. User confirms ←── Loop ⑤
         │
         ▼
 C. Task Breakdown
@@ -81,7 +84,11 @@ C. Task Breakdown
 ## Autonomous Path State Machine
 
 ```
-PLANNING → (ANALYZING — parallel N analysts)? → EXECUTING → REPORTING → COMPLETE
+PLANNING → (ANALYZING — parallel N analysts)? → [plan audit gate 📋] → EXECUTING → REPORTING → COMPLETE
+
+Plan audit gate: before PLANNING→EXECUTING the dispatcher spawns plan-reviewer
+(queue-audit mode) on task_queue.md + metrics.md; fail → back to PLANNING with
+.get-it-done/plan_audit.md (max 2 rounds, then waved through with a warning).
 
 EXECUTING: dispatcher batch per tick
   - pending tasks (deps done) → executor
@@ -97,10 +104,10 @@ EXECUTING: dispatcher batch per tick
 
 | Agent | Path | Role |
 |-------|------|------|
-| `interactive-planner` | `/blueprint` skill | Interactive A→B→C planning with user |
-| `scope-scanner` | Spawned by interactive-planner | Method-level codebase scope inventory |
-| `scope-verifier` | Spawned by scope-scanner | Validates scanner output (max 3 loops) |
-| `plan-reviewer` | After C3 | Audits frozen plan completeness |
+| *(no agent — main conversation)* | `/blueprint` skill | The skill itself orchestrates A→B→C with the user (sub-agents cannot ask the user questions) |
+| `scope-scanner` | Spawned by /blueprint orchestrator | Method-level codebase scope inventory |
+| `scope-verifier` | Spawned by /blueprint orchestrator after each scanner pass | Validates scanner output (max 3 loops) |
+| `plan-reviewer` | After C3 (document mode); dispatcher plan audit gate (queue-audit mode) | Audits plan completeness / criteria verifiability |
 | `planner` | `/objective` → dispatcher | Autonomous DAG decomposition |
 | `analyst` | Dispatcher (ANALYZING) | Research per RQ-X |
 | `executor` | Dispatcher (EXECUTING) | Implements one task (T-XXX) |
@@ -112,16 +119,16 @@ EXECUTING: dispatcher batch per tick
 
 ## Step Positioning Table (Interactive Path)
 
-| Step | Entry Condition | Output | Agent | Next |
-|------|-----------------|--------|-------|------|
-| A1 | User triggers /blueprint | Raw requirement | interactive-planner | B1 |
-| B1 | Have requirement | Planning doc skeleton + confirmed requirements | interactive-planner | B2 (user confirm) |
-| B2 | B1 confirmed | Method-level change scope in plan doc | scope-scanner + scope-verifier | B3 (user confirm) |
-| B3 | B2 confirmed | Discussion outcomes + implementation direction | interactive-planner | B4 (user confirm) |
-| B4 | B3 confirmed | Impact scope in plan doc | scope-scanner + scope-verifier | C1 (user confirm) |
-| C1 | B4 confirmed | User confirms task framework | interactive-planner | C2 |
-| C2 | C1 confirmed | Each task filled: file paths, steps, verification, test flag | interactive-planner | C3 |
-| C3 | C2 complete | Frozen plan + plan-reviewer audit → PASS / RETURN | interactive-planner + plan-reviewer | /continue (PASS) or return |
+| Step | Entry Condition | Output | Driven by | Next |
+|------|-----------------|--------|-----------|------|
+| A1 | User triggers /blueprint | Raw requirement | orchestrator (main conversation) | B1 |
+| B1 | Have requirement | Planning doc skeleton + confirmed requirements | orchestrator | B2 (user confirm) |
+| B2 | B1 confirmed | Method-level change scope in plan doc | orchestrator → scope-scanner + scope-verifier | B3 (user confirm) |
+| B3 | B2 confirmed | Discussion outcomes + implementation direction | orchestrator | B4 (user confirm) |
+| B4 | B3 confirmed | Impact scope in plan doc | orchestrator → scope-scanner + scope-verifier | C1 (user confirm) |
+| C1 | B4 confirmed | User confirms task framework | orchestrator | C2 |
+| C2 | C1 confirmed | Each task filled: file paths, steps, verification, test flag | orchestrator | C3 |
+| C3 | C2 complete | Frozen plan + plan-reviewer audit → PASS / RETURN | orchestrator → plan-reviewer | /continue (PASS) or return |
 
 ---
 

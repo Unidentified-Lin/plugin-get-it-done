@@ -185,6 +185,7 @@ OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTI
    mkdir -p .get-it-done/workspace
 
    rm -f .get-it-done/prd.md
+   rm -f .get-it-done/plan_audit.md
    ```
 
 3. **不動**：`.get-it-done/progress_log.md`、`.get-it-done/validation_log.md`、`.get-it-done/context/*`、`${CLAUDE_PLUGIN_DATA}/team_learnings/*`、`.get-it-done/state.md` 中的 `## Batch` 歷史 block。

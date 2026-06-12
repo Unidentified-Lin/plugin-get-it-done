@@ -1,6 +1,7 @@
-# Planning Guide — Plan Skill Operational Manual
+# Planning Guide — Blueprint Skill Operational Manual
 
-> **For**: planner agent (plan skill)
+> **For**: the /blueprint orchestrator (runs in the **main conversation** — NOT a sub-agent,
+> because B1/B3/C confirmation loops require direct user interaction)
 > **Load at**: Skill startup
 > **Covers**: Steps A1, B1, B2, B3, B4 and the document update principle
 
@@ -8,9 +9,10 @@
 
 ## Role
 
-You are the **planner** for the `get-it-done` plugin. Your job is to transform a raw requirement
+You are the **blueprint orchestrator** for the `get-it-done` plugin. Your job is to transform a raw requirement
 (ticket/issue or conversation) into a frozen, actionable planning document covering the full
-A+B+C pipeline.
+A+B+C pipeline. You drive every step yourself and spawn only the non-interactive sub-agents
+(scope-scanner, scope-verifier, plan-reviewer).
 
 ---
 
@@ -75,23 +77,24 @@ After each round, update the planning document with refined requirements and sco
 
 **Goal**: Deep codebase analysis to identify function/method-level change scope, then confirm with user.
 
-Process:
+Process (the scanner↔verifier loop is **orchestrator-driven** — scope-scanner has no agent-spawning tool):
 
-1. Spawn **scope-scanner** sub-agent with:
-   - Planning document path
-   - Mode: `change-scope`
-   - Path to `scope-scanner-guide.md`
-   - Path to `platform-adapter.md`
-   - Loop iteration: 1
-   - **Explicit instruction**: "After updating the plan doc, you MUST spawn scope-verifier to validate your output. Report the verifier's verdict (PASS / RETURN) in your final response."
-2. scope-scanner analyzes codebase and updates plan doc with method-level change scope
-3. scope-scanner spawns **scope-verifier** to validate
-4. If verifier returns corrections → scanner fixes and re-submits (max 3 loops)
-5. When verifier passes → result returns to planner
-6. **Verifier Fallback Check**: After scanner returns, read the plan doc and `grep` for `<!-- scope-verifier(B2):`. If **no** summary annotation is found → directly spawn scope-verifier yourself with: planning document path, mode `change-scope`, path to `scope-verifier-guide.md`, loop iteration 1.
-7. Planner summarizes the change scope for the user in a digestible format
-8. Ask user to confirm: "以上是分析出的異動範圍，確認正確嗎？"
-   - If user questions or wants adjustments → discuss, possibly re-run scope-scanner
+1. FOR iteration k = 1..3:
+   a. Spawn **scope-scanner** sub-agent with:
+      - Planning document path
+      - Mode: `change-scope`
+      - Path to `scope-scanner-guide.md`
+      - Loop iteration: k
+      - (k ≥ 2) the verifier's issue list from the previous iteration — the corrections to address
+   b. After the scanner returns, spawn **scope-verifier** with: planning document path, mode `change-scope`, path to `scope-verifier-guide.md`, loop iteration k.
+   c. Read the verifier's report:
+      - PASS → exit the loop
+      - issues found AND k < 3 → next iteration
+      - issues found AND k == 3 → escalate: present the unresolved issue list to the user and let them decide (accept as-is / adjust requirements / abort)
+2. Confirm the `<!-- scope-verifier(B2):` summary annotation exists in the plan doc; if the verifier forgot it, record the verdict in the doc yourself.
+3. Summarize the change scope for the user in a digestible format
+4. Ask user to confirm: "以上是分析出的異動範圍，確認正確嗎？"
+   - If user questions or wants adjustments → discuss, possibly re-run the loop
    - If user confirms → proceed to B3
 
 ---
@@ -157,18 +160,14 @@ After all listed topics:
 
 **Goal**: Identify all features/functions impacted by the planned changes.
 
-Process:
+Process (same orchestrator-driven loop as B2):
 
-1. Spawn **scope-scanner** with:
-   - Planning document path
-   - Mode: `impact-scope`
-   - Path to `scope-scanner-guide.md`
-   - Path to `platform-adapter.md`
-   - Loop iteration: 1
-   - **Explicit instruction**: "After updating the plan doc, you MUST spawn scope-verifier. Report the verifier's verdict in your final response."
-2. Scanner inventories direct and indirect impacts → verifier validates (max 3 loops)
-3. **Verifier Fallback Check**: grep for `<!-- scope-verifier(B4):` in plan doc. If absent → directly spawn scope-verifier with mode `impact-scope`.
-4. When verifier passes → planner presents impact scope to user:
+1. FOR iteration k = 1..3:
+   a. Spawn **scope-scanner** with: planning document path, mode `impact-scope`, path to `scope-scanner-guide.md`, loop iteration k, and (k ≥ 2) the verifier's issue list to address.
+   b. Spawn **scope-verifier** with: planning document path, mode `impact-scope`, path to `scope-verifier-guide.md`, loop iteration k.
+   c. PASS → exit loop; issues at k == 3 → escalate to the user.
+2. Confirm the `<!-- scope-verifier(B4):` summary annotation exists; record the verdict yourself if missing.
+3. Present impact scope to user:
    - User confirms → proceed to C phase
    - User wants minor adjustments → discuss, update plan, re-confirm
    - User wants different approach (impact too large) → return to B3

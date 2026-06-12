@@ -151,7 +151,7 @@ A task in milestone `M_k` is eligible to be claimed by an executor (Step 5 P4 in
 1. Its `Dependencies:` are all `Status: done`, AND
 2. Every milestone `M_1..M_{k-1}` has derived `milestone_status() == "validated"`.
 
-Milestone IDs are conventionally ordered alphanumerically (`M1 < M2 < M10`); dispatcher uses string-ascending comparison. Planner SHOULD use zero-padded IDs (`M01, M02, M10`) when the goal has ≥10 milestones to keep ordering monotonic.
+Milestone IDs are ordered **numerically** on the integer after `M` (`M1 < M2 < M10`) — the dispatcher (and its helper script `gid.py`) compares the parsed number, never the raw string. No zero-padding is needed; `M01`-style IDs still parse correctly if present.
 
 ---
 

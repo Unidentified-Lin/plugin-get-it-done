@@ -21,7 +21,7 @@ Extract the goal from the user's message — everything after `/objective`. If e
 
 ## Step 0: Bootstrap
 
-**When to use `/plan` first**: If the requirement is complex or ambiguous (needs interactive scope analysis, design decisions, impact assessment), consider running `/plan` first. `/plan` produces a frozen planning document and initializes `.get-it-done/` state automatically — you can then run `/continue` directly instead of `/objective`.
+**When to use `/blueprint` first**: If the requirement is complex or ambiguous (needs interactive scope analysis, design decisions, impact assessment), consider running `/blueprint` first. `/blueprint` produces a frozen planning document and initializes `.get-it-done/` state automatically — you can then run `/continue` directly instead of `/objective`.
 
 **macOS / Linux (Claude Code and GitHub Copilot):**
 ```bash
@@ -39,17 +39,20 @@ rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" .get-
 
 **Windows (GitHub Copilot — PowerShell):**
 ```powershell
-# Detect plugin root
-$PLUGIN_ROOT = Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+# Detect plugin root (most recently modified wins when multiple versions are cached)
+$PLUGIN_ROOT = Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
 $PLUGIN_DATA = "$HOME\.copilot\data\get-it-done"
 
 # A — cross-project learnings
 New-Item -ItemType Directory -Path "$PLUGIN_DATA\team_learnings\agent_rules" -Force | Out-Null
 robocopy "$PLUGIN_ROOT\templates\team_learnings" "$PLUGIN_DATA\team_learnings" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy (team_learnings) failed with code $LASTEXITCODE" }
 
 # B — per-project state
 New-Item -ItemType Directory -Path ".get-it-done\context",".get-it-done\findings",".get-it-done\workspace" -Force | Out-Null
 robocopy "$PLUGIN_ROOT\templates\.get-it-done" ".get-it-done" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
+if ($LASTEXITCODE -ge 8) { throw "robocopy (.get-it-done) failed with code $LASTEXITCODE" }
+$global:LASTEXITCODE = 0   # robocopy returns 1-7 on SUCCESS — normalize so the harness doesn't read success as failure
 ```
 
 `.get-it-done/workspace/` (per-executor scratch) and `.get-it-done/findings/` (per-analyst findings) are sub-agent write surfaces — bootstrap only creates the directory; sub-agents fill files.
@@ -128,6 +131,9 @@ mkdir -p .get-it-done/workspace
 
 # (4) Remove stale .get-it-done/prd.md (planner writes fresh when needed)
 rm -f .get-it-done/prd.md
+
+# (5) Remove stale plan-audit file from prior goal (dispatcher rewrites when its audit gate fails)
+rm -f .get-it-done/plan_audit.md
 ```
 
 **Do NOT overwrite** (these accumulate across goals and are preserved):
@@ -144,7 +150,9 @@ Append to `.get-it-done/progress_log.md`:
 
 ## Step 5: Launch the dispatcher
 
-Invoke the `continue` skill to start the first cycle. Use the Skill tool with `skill: "continue"` (or `skill: "get-it-done:continue"` if a name collision requires it).
+Invoke the `continue` skill to start the first cycle (see `platform-adapter.md` Section 9 for cross-platform skill invocation):
+- **Claude Code**: Skill tool with `skill: "continue"` (or `skill: "get-it-done:continue"` if a name collision requires it).
+- **GitHub Copilot** (no Skill tool): read `{plugin-root}/skills/continue/SKILL.md` and execute its instructions inline, in this same session.
 
 ## Step 6: Confirm to user
 

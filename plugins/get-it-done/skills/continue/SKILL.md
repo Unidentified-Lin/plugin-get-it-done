@@ -32,6 +32,19 @@ rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" .get-
 
 If `.get-it-done/state.md` is missing after bootstrap, abort with an error.
 
+## Step 0.5: Locate the helper script (deterministic fast-path)
+
+The deterministic computations below (state parse, DAG check, batch selection, log truncation, batch-id allocation) are implemented in a stdlib-only Python script. **Prefer the script over manual derivation** — it removes the highest-risk bookkeeping from the loop.
+
+```bash
+GID="${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py"   # Copilot: {plugin-root}/skills/continue/scripts/gid.py
+python3 "$GID" state    # smoke test; on Windows try `python` if `python3` is absent
+```
+
+- Prints JSON → script is usable. Use it in Steps 3, 4, 5, and 6 as documented there. All subcommands run **from the project root** (they read `.get-it-done/` relatively).
+- Python unavailable, or the script exits 2 / prints `{"error": ...}` → fall back to the manual procedure kept in each step. Log `<ISO> [GID_FALLBACK] <reason>` once to progress_log.md.
+- The script is read-only except `truncate-logs`. Every write to `state.md` / `task_queue.md` / `research_requests.md` remains yours — the script only tells you what to write.
+
 ## Step 1: Schema version check
 
 Read the YAML block at the top of `.get-it-done/state.md`. If `schema_version` is missing or `< 2`, this is a pre-v2 file from an older plugin version:
@@ -121,17 +134,27 @@ ELSE:
 
 This split closes the validator-rerun edge case automatically — sub-case B never re-spawns a validator whose verdict already landed in `validation_log.md`, so the `(task_id, attempt_no)` dedup never has to arbitrate two different verdicts on the same attempt. Re-spawn (sub-case A) is safe by the idempotency rules in `.get-it-done/state.md` (executor scratch dir keyed by task_id; Attempts not yet incremented; validation_log dedup on `(task_id, attempt_no)` / `(milestone_id, attempt_no)`; analyst writes to a per-RQ file `.get-it-done/findings/RQ-X.md` that overwrites cleanly on re-run because `Status: open` still holds — a fulfilled RQ is never re-spawned).
 
-## Step 3: Truncate-check (no archive folder — direct truncation)
+## Step 3: Truncate-check (trimmed lines are archived, not lost)
 
-- `wc -l .get-it-done/progress_log.md > 400` → keep last 200 lines; append `<ISO> [TRUNCATE] progress_log.md from N to 200`.
-- `wc -l .get-it-done/validation_log.md > 500` → keep last 250 lines; append `<ISO> [TRUNCATE] validation_log.md from N to 250`.
+**Script path**: `python3 "$GID" truncate-logs` — archives trimmed lines to `.get-it-done/archive/<logname>.md` (append) before truncating, and appends the `[TRUNCATE]` marker itself. Done.
+
+**Manual fallback**:
+- `wc -l .get-it-done/progress_log.md > 400` → append all but the last 200 lines to `.get-it-done/archive/progress_log.md`, keep last 200 lines; append `<ISO> [TRUNCATE] progress_log.md from N to 200 (archived)`.
+- `wc -l .get-it-done/validation_log.md > 500` → same with `.get-it-done/archive/validation_log.md`, keep last 250 lines.
 - A-side patterns.md > 200 lines: defer to Reflector — do NOT auto-truncate.
 
-Idempotent — no edits if under the caps.
+The archive preserves the append-only audit trail that `/objective` promises ("progress_log / validation_log accumulate across goals") while keeping the live files small. Idempotent — no edits if under the caps.
 
 ## Step 4: DAG pre-check
 
-If `phase ∈ {EXECUTING, REPORTING}` AND `.get-it-done/task_queue.md` has any task entries, run:
+If `phase ∈ {EXECUTING, REPORTING}` AND `.get-it-done/task_queue.md` has any task entries:
+
+**Script path**: `python3 "$GID" dag-check` →
+- `violations` non-empty → take the `[BAD_DAG]` branch below with the violation strings.
+- `warnings` non-empty (e.g. `touches-overlap`) → append `<ISO> [DAG_WARN] <warning>` lines to progress_log.md but DO NOT block — the runtime collision check in Step 5 already defers overlapping executors.
+- `ok: true` → proceed.
+
+**Manual fallback**:
 
 ```
 all_ids := every "### <ID>:" heading in task_queue.md
@@ -151,6 +174,19 @@ IF any violation:
 This is defensive; planner self-audit should catch this first, but the dispatcher is the last gate.
 
 ## Step 5: Pick the actionable batch (Stage 3: heterogeneous, up to N work items)
+
+**Script path** (EXECUTING phase): `python3 "$GID" pool` computes everything below deterministically — derived milestone statuses, the priority-ordered pool (P1→P4) with Touches collision deferral, and the first-5 `batch` slice. Map its output to the decisions:
+- `batch` non-empty → that IS your batch; log each `deferred` entry as `<ISO> [DEFER] ...`; GOTO Step 6.
+- `batch` empty AND `all_done_and_validated: true` → set phase = REPORTING; run report_and_reflect(); EXIT.
+- `batch` empty AND `any_blocked: true` → set phase = AWAITING_HUMAN; EXIT with blocked-task summary.
+- `batch` empty AND `any_in_flight: true` → stale claim; re-enter Step 2 logic.
+- `batch` empty otherwise → dependency/milestone deadlock → AWAITING_HUMAN (as in the fallback below).
+
+**Script path** (ANALYZING phase): `python3 "$GID" rqs` → spawn one analyst per `open_unclaimed[:5]`; `open_claimed` non-empty with nothing in flight → crash path; everything fulfilled → back to PLANNING. Clear any `fulfilled_with_stale_claim` markers.
+
+Milestone ordering is **numeric** on the integer after `M` (`M2 < M10`); never compare milestone IDs as plain strings. The script already does this.
+
+**Manual fallback**:
 
 ```
 N_MAX := 5                              # hard cap; do not raise
@@ -202,6 +238,7 @@ PHASE_BRANCH_EXECUTING:
     #
     # Milestone gate (downstream blocking):
     #   active_ms := lowest M_k where milestone_status(M_k) != validated
+    #               ("lowest" = numeric compare on the integer after M: M2 < M10)
     #   A task whose Milestone > active_ms cannot start until active_ms reaches `validated`.
 
     pool := []                          # heterogeneous — order = priority
@@ -292,7 +329,7 @@ Order within the pool is **priority**, not arbitrary — validators come first s
 
 ## Step 6: Atomic pre-write (state + claim every task in the batch)
 
-Generate the next `batch_id` (monotonic — read the highest existing `## Batch` block in state.md and increment; if none, start at `B0001`).
+Generate the next `batch_id`: `python3 "$GID" batch-id` (monotonic over `## Batch` history + current `batch_id`). Manual fallback: read the highest existing `## Batch` block in state.md and increment; if none, start at `B0001`.
 
 ```
 Rewrite state.md YAML block (preserving everything below the block):
@@ -431,9 +468,37 @@ Milestone status is derived (see task_queue.md "Derivation rule") — the dispat
 **Planner return:**
 - Read `next_phase_request`:
   - `ANALYZING`: confirm `research_requests.md` now has the requested `RQ-` IDs with `Status: open`; set `phase = ANALYZING`.
-  - `EXECUTING`: confirm `task_queue.md` and `.get-it-done/metrics.md` are populated; (Step 4 already DAG-checked, but step 10 will re-run it after we write); set `phase = EXECUTING`.
+  - `EXECUTING`: confirm `task_queue.md` and `.get-it-done/metrics.md` are populated, then run the **plan audit gate** below before flipping the phase.
   - `REPORTING`: rare — only when planner determines the goal is already satisfied; set `phase = REPORTING`.
 - Append `<ISO> [PLAN_DONE] next=<next_phase_request>` to progress_log.md.
+
+**Plan audit gate (quality check before EXECUTING):**
+
+The autonomous path has no human plan review — this gate is its substitute. It catches the most expensive failure mode (a whole goal executed against vague or unverifiable criteria) for the cost of one extra spawn.
+
+```
+audit_fails := count of [PLAN_AUDIT_FAIL] lines in progress_log.md SINCE the latest
+               [NEW_GOAL] or [GOAL_REFINED] line (current goal only)
+IF audit_fails >= 2:
+    # Avoid planner↔reviewer ping-pong; two strikes and we proceed with a warning.
+    append "<ISO> [PLAN_AUDIT_SKIPPED] max audit rounds reached; proceeding to EXECUTING"
+    rm -f .get-it-done/plan_audit.md
+    set phase = EXECUTING
+ELSE:
+    spawn get-it-done:plan-reviewer (single Agent call, NOT a batch member) with mode `queue-audit`
+    and absolute paths to: .get-it-done/task_queue.md, .get-it-done/metrics.md,
+    .get-it-done/goal.md, .get-it-done/prd.md (if it exists).
+    Parse its ---agent-return--- block (role: plan-reviewer, verdict: pass|fail, fail_reasons).
+    IF verdict == pass (or the return is malformed — the gate must not deadlock the pipeline):
+        append "<ISO> [PLAN_AUDIT_PASS]" (or "[PLAN_AUDIT_PASS] (malformed return — waved through)")
+        rm -f .get-it-done/plan_audit.md
+        set phase = EXECUTING
+    IF verdict == fail:
+        write the full fail_reasons list to .get-it-done/plan_audit.md (dispatcher-owned file;
+        overwrite). Append "<ISO> [PLAN_AUDIT_FAIL] <one-line summary>".
+        keep phase = PLANNING — next tick re-spawns planner, which reads plan_audit.md
+        (listed in its inputs) and MUST address every issue before re-emitting EXECUTING.
+```
 
 ## Step 10: Close the batch
 
@@ -496,10 +561,18 @@ Reflector is NOT part of the relay. It runs once per goal, after every task reac
 
 ```
 1. Read .get-it-done/goal.md, .get-it-done/task_queue.md, last ~20 entries of .get-it-done/validation_log.md.
+1.5 Degraded-validation sweep: grep .get-it-done/validation_log.md for "DEGRADED:" among
+    entries belonging to this goal (since the latest [NEW_GOAL]/[GOAL_REFINED]; validators
+    write e.g. "DEGRADED: BROWSER_UNAVAILABLE — ..." in their notes when they had to fall
+    back from the full verification protocol). IF any found:
+      - append "<ISO> [DEGRADED_VALIDATION] <task IDs + reasons>" to progress_log.md
+      - the [GOAL_COMPLETE] message MUST include a prominent "⚠️ 人工確認清單" section
+        listing each degraded task ID, the reason, and what the human should manually verify.
+        The goal still closes — but the user must not discover the gap by accident.
 2. Append to .get-it-done/progress_log.md:
      "<ISO> [GOAL_COMPLETE] <goal one-liner>. <N> tasks completed across <M> milestones; first-pass rate <X>/<Y>. Key deliverables: <bullet list of .get-it-done/workspace/exec-*/ artifact paths>."
 3. Rewrite state.md YAML: phase=COMPLETE, status=WAITING, batch_id=null, batch_started_at=null, batch_ended_at=null, active_agents=[], last_updated=<ISO>. Remove the most recent `## Batch` block IFF its `next_phase == REPORTING` (it's now stale).
-4. Emit the [GOAL_COMPLETE] paragraph to the user.
+4. Emit the [GOAL_COMPLETE] paragraph to the user (including the ⚠️ 人工確認清單 when step 1.5 found degraded validations).
 5. Spawn reflector via Agent tool. Prompt: "Execute your reflector role per agents/reflector.md. The goal just COMPLETE'd. Analyse validation_log + progress_log + the most recent batch handoffs. Update A-side and B-side learnings per your classification matrix. Do NOT change .get-it-done/state.md phase. Do NOT emit an agent-return block — your output is the file writes themselves."
 6. Reflector returns; EXIT. Reflection failures are logged ([REFLECT_FAIL]) but do NOT roll back COMPLETE.
 ```
