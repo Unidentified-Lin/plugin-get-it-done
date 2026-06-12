@@ -1,28 +1,29 @@
-# Task Breakdown Guide — C1, C2, C3 Rules
+# Task Breakdown Guide — Task Framework, Task Detailing, Plan Freeze & Handoff
 
 > **For**: the /blueprint orchestrator (main conversation)
-> **Load at**: Entering C phase (after B4 confirmed)
-> **Covers**: C1 framework confirmation, C2 task fill, C3 freeze + get-it-done handoff
+> **Load at**: Entering the Task Breakdown stages (after Impact Scope Inventory is confirmed)
+> **Covers**: Task Framework Confirmation, Task File Scaffolding, Task Detailing,
+> Plan Freeze & Handoff (get-it-done execution state initialization)
 
 ---
 
-## Step C1 — Framework Confirmation
+## Stage: Task Framework Confirmation
 
 Present the current task list skeleton to the user and ask:
 
 > "以下是目前的任務框架，方向正確嗎？有遺漏或需要調整的項目嗎？"
 
 Use `AskUserQuestion` (Claude Code) or `ask_user` (Copilot) with choices:
-- "框架正確，繼續細化" → proceed to C1-post (scaffold task files)
+- "框架正確，繼續細化" → proceed to Task File Scaffolding
 - "需要調整" → collect feedback, adjust tasks, re-present
 
 **Exit condition**: User confirms the framework is directionally correct.
 
 ---
 
-## Step C1-post — Scaffold Task Files
+## Stage: Task File Scaffolding
 
-Immediately after C1 confirmation, create all task files as stubs **before** any C2 investigation.
+Immediately after the framework is confirmed, create all task files as stubs **before** any Task Detailing investigation.
 
 **Task file path convention**:
 
@@ -39,11 +40,11 @@ Immediately after C1 confirmation, create all task files as stubs **before** any
 2. Create the task file using the template — fill in task number and title only; leave other fields as `{TBD}`.
 3. Update the main plan document's 任務清單 summary table to reference the new file.
 
-After all task files are created, proceed to C2.
+After all task files are created, proceed to Task Detailing.
 
 ---
 
-## Step C2 — Task Fill (Surgical Codebase Investigation)
+## Stage: Task Detailing (Surgical Codebase Investigation)
 
 For each task, open its task file and perform a **surgical** codebase investigation:
 - Use `grep` / `glob` to locate exact file paths, class names, function signatures.
@@ -80,7 +81,7 @@ Set **☐ 不需要測試** when:
 - The task is UI-only (no backend logic change)
 - The task adds a new endpoint already covered by integration tests
 
-### Quality bar for C2 fill
+### Quality bar for Task Detailing
 
 A task is considered fully filled when:
 - [ ] File path(s) point to actual existing files (verified via `glob`/`grep`)
@@ -90,7 +91,7 @@ A task is considered fully filled when:
 
 ---
 
-## Step C3 — Final Confirmation, Freeze, and Handoff
+## Stage: Plan Freeze & Handoff
 
 Present the complete task list to the user:
 
@@ -98,9 +99,9 @@ Present the complete task list to the user:
 
 Use `AskUserQuestion` / `ask_user` with choices:
 - "確認，凍結並進入執行" → freeze documents; run plan-reviewer; then initialize .get-it-done/ state
-- "需要調整" → return to C2 for the specific tasks mentioned
+- "需要調整" → return to Task Detailing for the specific tasks mentioned
 
-**After C3 confirmation**:
+**After the user confirms**:
 1. Update main plan document status line to: `**目前狀態**: 已凍結，進入執行`
 2. Update each task file's **狀態** field to `待執行（Pending）`.
 3. Automatically trigger **plan-reviewer** agent (passing planning document path and `plan-reviewer-guide.md` path).
@@ -234,7 +235,7 @@ Then tell the user:
 
 ## Freeze Conditions
 
-The document may only be frozen (C3 pass) when ALL of the following are true:
+The document may only be frozen (Plan Freeze & Handoff pass) when ALL of the following are true:
 
 - [ ] 需求重點 is precise (contains success criteria and boundaries)
 - [ ] 異動範圍 lists concrete modules/services/APIs — not just "TBD"

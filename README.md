@@ -14,7 +14,7 @@ claude plugin marketplace add Unidentified-Lin/plugin-get-it-done
 
 | Plugin | Skills | Description |
 |--------|--------|-------------|
-| `get-it-done` | `/blueprint` | Interactive A→B→C planning pipeline — scope analysis, user confirmation loops, task freeze → initializes `.get-it-done/` execution state for `/continue` |
+| `get-it-done` | `/blueprint` | Interactive planning pipeline (Intake → Requirements Confirmation → Change/Impact Scope Inventory → Implementation Direction → Task Detailing → Plan Freeze & Handoff) — initializes `.get-it-done/` execution state for `/continue` |
 | | `/objective` | Set business goal and initialize agent team, v2 state schema, bootstrap workspace |
 | | `/adjust` | Refine the active goal mid-flight — soft (append constraints, preserve task_queue/prd/findings) or hard (rewrite goal, reset planner artifacts). Both preserve progress_log, validation_log, and .get-it-done/context |
 | | `/continue` | Batch-aware dispatcher: autopilots from goal to COMPLETE; only stops at terminal phase, planner-declared PauseAfter milestones, or crash recovery. Schedules executors/validators/analysts in parallel (N≤5), enforces DAG & collision detection |
@@ -49,7 +49,7 @@ plugins/get-it-done/
     reflector.md                # Post-cycle learning analysis (8 rules RR-001..008)
   
   skills/
-    blueprint/SKILL.md          # Interactive A→B→C planning pipeline → hands off to /continue
+    blueprint/SKILL.md          # Interactive planning pipeline (Intake → … → Plan Freeze & Handoff) → hands off to /continue
     objective/SKILL.md          # Goal bootstrap: state.md schema, workspace init
     adjust/SKILL.md             # Mid-flight goal refinement (soft/hard); auto-pauses RUNNING dispatcher via AWAITING_HUMAN
     continue/SKILL.md           # Dispatcher: Step 0-11 inner loop (crash recovery, DAG check, batch pool, atomic pre-write, spawn, parse, persist, close, loop)
@@ -103,4 +103,4 @@ cat .get-it-done/context/domain_knowledge.md       # Project learnings
 
 ---
 
-**Version**: 1.0.2 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin
+**Version**: 1.1.1 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin

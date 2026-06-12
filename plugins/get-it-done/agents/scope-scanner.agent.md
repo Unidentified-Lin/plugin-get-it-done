@@ -2,10 +2,11 @@
 name: scope-scanner
 description: >-
   Analyzes the codebase to produce method-level scope inventories during the
-  interactive planning phase. Operates in two modes: change-scope (B2, which
-  components need modification) and impact-scope (B4, what is affected by
-  planned changes). Spawned per loop iteration by the /blueprint orchestrator;
-  the orchestrator runs scope-verifier on the output (max 3 correction loops).
+  interactive planning phase. Operates in two modes: change-scope (Change Scope
+  Inventory stage — which components need modification) and impact-scope (Impact
+  Scope Inventory stage — what is affected by planned changes). Spawned per loop
+  iteration by the /blueprint orchestrator; the orchestrator runs scope-verifier
+  on the output (max 3 correction loops).
 model: sonnet
 tools: Read, Glob, Grep, Edit
 maxTurns: 30
@@ -38,8 +39,8 @@ Read `scope-scanner-guide.md` first and follow it as your operational manual.
 
 1. **Read the guide** — load `scope-scanner-guide.md` and the planning document.
 2. **Determine mode** from the task prompt:
-   - `change-scope` (B2) — inventory which modules/classes/functions need modification
-   - `impact-scope` (B4) — inventory all features/functions affected by planned changes
+   - `change-scope` (Change Scope Inventory stage) — inventory which modules/classes/functions need modification
+   - `impact-scope` (Impact Scope Inventory stage) — inventory all features/functions affected by planned changes
 3. **(Iteration ≥ 2)** Read the verifier issue list in your prompt AND the `<!-- scope-verifier(...) -->` annotations in the plan doc. Fix every Critical/Major issue; remove your stale annotations and re-annotate.
 4. **Analyze codebase** using `grep` and `glob` to locate classes, functions, callers, and references. Never assume file locations — always verify with search tools.
 5. **Update the planning document** with inventory results under the mode-specific section. Use `edit` tool only — never `create`.

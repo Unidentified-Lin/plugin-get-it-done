@@ -410,8 +410,8 @@ body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: 
   </div>
   <div class="legend">
     <span class="legend-row-label">Model</span>
-    <div class="legend-item"><span class="model-badge model-premium">claude-opus-4-7</span> 規劃／研究／反思（核心判斷）</div>
-    <div class="legend-item"><span class="model-badge model-standard">claude-sonnet-4-6</span> 執行／驗證／掃描（實作）</div>
+    <div class="legend-item"><span class="model-badge model-premium">opus</span> 規劃／研究／反思（核心判斷）</div>
+    <div class="legend-item"><span class="model-badge model-standard">sonnet</span> 執行／驗證／掃描（實作）</div>
     <span style="margin-left:auto"></span>
     <a href="state-machine.html" class="sm-link">⚙️ Autonomous State Machine（完整狀態轉移圖）→</a>
   </div>
@@ -473,7 +473,7 @@ body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: 
     <div class="agent-card" style="max-width:340px">
       <div class="agent-icon">📐</div>
       <div class="agent-name">planner</div>
-      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="model-badge model-premium">opus</div>
       <div class="agent-role">目標 → 結構化 task DAG（含 milestones、Touches、Dependencies、PauseAfter），自我稽核 DAG 後回傳 next_phase_request</div>
       <div class="skills-sep"></div>
       <div class="skills-label">Writes</div>
@@ -509,7 +509,7 @@ body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: 
   </div>
 
   <div class="info-note">
-    🤖 <strong>自主 <code>planner</code> ≠ 互動 <code>interactive-planner</code>：</strong>此階段由自主 <code>planner</code> 直接拆解，<strong>不</strong>走 /blueprint 的 A→B→C 使用者確認迴圈。即便目標抽象，planner 也可自行（必要時透過 ANALYZING 研究）拆解到可執行 —— /objective 的全自動性質即源於此。
+    🤖 <strong>自主 <code>planner</code> ≠ /blueprint 主對話 orchestrator：</strong>此階段由自主 <code>planner</code> 直接拆解，<strong>不</strong>走 /blueprint 的互動式使用者確認迴圈（Requirements Confirmation → … → Plan Freeze &amp; Handoff）。即便目標抽象，planner 也可自行（必要時透過 ANALYZING 研究）拆解到可執行 —— /objective 的全自動性質即源於此。
   </div>
 
   <div class="data-output">
@@ -532,7 +532,7 @@ body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: 
     <div class="agent-card">
       <div class="agent-icon">🔬</div>
       <div class="agent-name">analyst <span style="color:#64748b">· RQ-1</span></div>
-      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="model-badge model-premium">opus</div>
       <div class="agent-role">回答一個 research request：市場 / 技術 / 競品研究</div>
       <div class="skills-sep"></div>
       <div class="write-item">findings/RQ-1.md</div>
@@ -540,7 +540,7 @@ body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: 
     <div class="agent-card">
       <div class="agent-icon">🔬</div>
       <div class="agent-name">analyst <span style="color:#64748b">· RQ-2</span></div>
-      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="model-badge model-premium">opus</div>
       <div class="agent-role">獨立回答另一個 RQ（PR-012 保證 RQ 間彼此獨立）</div>
       <div class="skills-sep"></div>
       <div class="write-item">findings/RQ-2.md</div>
@@ -548,7 +548,7 @@ body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: 
     <div class="agent-card" style="border-style:dashed; opacity:0.7">
       <div class="agent-icon">🔬</div>
       <div class="agent-name">analyst <span style="color:#64748b">· RQ-N</span></div>
-      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="model-badge model-premium">opus</div>
       <div class="agent-role">…最多 N=5 個平行</div>
       <div class="skills-sep"></div>
       <div class="write-item">findings/RQ-N.md</div>
@@ -575,7 +575,7 @@ body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: 
     <div class="agent-card">
       <div class="agent-icon">✅</div>
       <div class="agent-name">validator <span style="color:#64748b">· task</span></div>
-      <div class="model-badge model-standard">claude-sonnet-4-6</div>
+      <div class="model-badge model-standard">sonnet</div>
       <div class="agent-role">P1 — 驗證 executed 任務（最快解鎖下游）。verdict pass→done / fail→needs_rework / escalate→blocked</div>
       <div class="skills-sep"></div>
       <div class="skills-label">寫面：無（verdict 在 agent-return）</div>
@@ -584,7 +584,7 @@ body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: 
     <div class="agent-card">
       <div class="agent-icon">🏁</div>
       <div class="agent-name">validator <span style="color:#64748b">· milestone</span></div>
-      <div class="model-badge model-standard">claude-sonnet-4-6</div>
+      <div class="model-badge model-standard">sonnet</div>
       <div class="agent-role">P2 — milestone 全 done 後做整合驗證；fail 回傳 task_ids_to_rework；PauseAfter→planned pause</div>
       <div class="skills-sep"></div>
       <div class="skills-label">閘門：M_k 未 validated 前，M_{k+1} 任務不可啟動</div>
@@ -593,7 +593,7 @@ body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: 
     <div class="agent-card">
       <div class="agent-icon">🔧</div>
       <div class="agent-name">executor <span style="color:#64748b">· rework</span></div>
-      <div class="model-badge model-standard">claude-sonnet-4-6</div>
+      <div class="model-badge model-standard">sonnet</div>
       <div class="agent-role">P3 — 重做 needs_rework 任務（最舊優先，收斂停滯迴圈）</div>
       <div class="skills-sep"></div>
       <div class="write-item">workspace/exec-T-XXX/</div>
@@ -602,7 +602,7 @@ body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: 
     <div class="agent-card">
       <div class="agent-icon">⚙️</div>
       <div class="agent-name">executor <span style="color:#64748b">· new</span></div>
-      <div class="model-badge model-standard">claude-sonnet-4-6</div>
+      <div class="model-badge model-standard">sonnet</div>
       <div class="agent-role">P4 — 實作 deps 全 done 且 Milestone==active_ms 的 pending 任務，產出 artifact</div>
       <div class="skills-sep"></div>
       <div class="write-item">workspace/exec-T-XXX/</div>
@@ -651,7 +651,7 @@ body.light-mode .badge-purple { background: rgba(139,92,246,0.1); border-color: 
     <div class="agent-card" style="max-width:320px">
       <div class="agent-icon">🪞</div>
       <div class="agent-name">reflector</div>
-      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="model-badge model-premium">opus</div>
       <div class="agent-role">分析團隊表現（batch 動態、DAG 估算偏差），把 learnings 分流到正確通道並更新 agent rules。非 relay 的一環，獨立執行一次。</div>
       <div class="skills-sep"></div>
       <div class="skills-label">Learning channels</div>

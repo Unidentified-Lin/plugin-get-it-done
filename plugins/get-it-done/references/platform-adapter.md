@@ -187,7 +187,7 @@ $global:LASTEXITCODE = 0
 
 `AskUserQuestion` / `ask_user` only reach the user from the **main conversation**. Sub-agents spawned via `Agent` / `task` are non-interactive — their questions are never surfaced; the spawn returns only their final output. Therefore:
 
-- Any step that needs user confirmation (e.g. /blueprint B1/B3/C loops) must run in the main conversation.
+- Any step that needs user confirmation (e.g. the /blueprint Requirements Confirmation / Implementation Direction / Task Breakdown loops) must run in the main conversation.
 - Sub-agents that hit a decision they cannot make must **return** with the question in their final response and let the orchestrator ask the user.
 
 ---

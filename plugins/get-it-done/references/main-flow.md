@@ -13,9 +13,10 @@ Interactive Path                    Autonomous Path
 /blueprint                          /objective <goal>
   │                                   │
   ▼                                   ▼
-A–C (planning)                      PLANNING phase
-  │                                 (planner agent)
-  │ .get-it-done/ initialized                 │
+Planning stages                     PLANNING phase
+(Intake → … → Freeze & Handoff)     (planner agent)
+  │                                   │
+  │ .get-it-done/ initialized         │
   ▼                                   ▼
 /continue ←─────────────────────── EXECUTING phase
   │                                 (dispatcher loop)
@@ -29,48 +30,48 @@ The **autonomous path** (`/objective`) is full autopilot: even from an abstract,
 
 ---
 
-## Interactive Path Pipeline (A → B → C → Dispatcher)
+## Interactive Path Pipeline (/blueprint → Dispatcher)
 
 ```
-A. Input
-   A1. Parse requirement (ticket ID or conversation)
+Intake
+   Parse requirement (ticket ID or conversation)
         │
         ▼
-B. Planning Document (progressively filled)
+Planning stages (planning document progressively filled)
    🤖 /blueprint orchestrator (MAIN conversation — user loops need AskUserQuestion)
    👾 scope-scanner  👻 scope-verifier (non-interactive sub-agents)
 
-   B1. Requirement confirmation loop 🤖
+   Requirements Confirmation 🤖
         a. Create planning document skeleton
         b. Refine requirements, define scope
         c. Confirm with user ←── Loop ①
 
-   B2. Change scope inventory 🤖→👾→👻 (orchestrator-driven, max 3 iterations)
+   Change Scope Inventory 🤖→👾→👻 (orchestrator-driven, max 3 iterations)
         a. Orchestrator spawns scope-scanner (mode: change-scope, iteration k)
         b. Orchestrator spawns scope-verifier on the result
         c. Issues → re-spawn scanner with issue list; PASS → present scope
         d. User confirms ←── Loop ②
 
-   B3. Implementation direction 🤖
+   Implementation Direction 🤖
         a. Generate discussion list
         b. Discuss topics one by one ←── Loop ③ (per topic)
         c. User confirms direction ←── Loop ④
 
-   B4. Impact scope inventory 🤖→👾→👻 (same orchestrator-driven loop)
+   Impact Scope Inventory 🤖→👾→👻 (same orchestrator-driven loop)
         a. Orchestrator spawns scope-scanner (mode: impact-scope, iteration k)
         b. Orchestrator spawns scope-verifier on the result
         c. Issues → re-spawn scanner; PASS → present impact
         d. User confirms ←── Loop ⑤
         │
         ▼
-C. Task Breakdown
-   C1. User confirms task framework ←── Loop ⑥
-   C2. Surgical codebase investigation, fill each task
-   C3. User confirms task list → plan-reviewer audits 📋
+Task Breakdown stages
+   Task Framework Confirmation — user confirms task framework ←── Loop ⑥
+   Task Detailing — surgical codebase investigation, fill each task
+   Plan Freeze & Handoff — user confirms task list → plan-reviewer audits 📋
         ├─ PASS → freeze + initialize .get-it-done/ state → /continue
-        ├─ Return to C2 (task details)
-        ├─ Return to B3 (solution direction)
-        └─ Return to B1 (requirements)
+        ├─ Return to Task Detailing (task details)
+        ├─ Return to Implementation Direction (solution direction)
+        └─ Return to Requirements Confirmation (requirements)
         │
         ▼
    .get-it-done/task_queue.md + .get-it-done/metrics.md + .get-it-done/state.md (EXECUTING)
@@ -78,6 +79,21 @@ C. Task Breakdown
         ▼
 /continue (autonomous dispatcher)
 ```
+
+### Legacy stage codes
+
+Older diagrams and documents used letter codes for these stages. Mapping:
+
+| Legacy code | Stage name |
+|-------------|------------|
+| A1 | Intake |
+| B1 | Requirements Confirmation |
+| B2 | Change Scope Inventory |
+| B3 | Implementation Direction |
+| B4 | Impact Scope Inventory |
+| C1 | Task Framework Confirmation |
+| C2 | Task Detailing |
+| C3 | Plan Freeze & Handoff |
 
 ---
 
@@ -104,10 +120,10 @@ EXECUTING: dispatcher batch per tick
 
 | Agent | Path | Role |
 |-------|------|------|
-| *(no agent — main conversation)* | `/blueprint` skill | The skill itself orchestrates A→B→C with the user (sub-agents cannot ask the user questions) |
-| `scope-scanner` | Spawned by /blueprint orchestrator | Method-level codebase scope inventory |
+| *(no agent — main conversation)* | `/blueprint` skill | The skill itself orchestrates all planning stages with the user (sub-agents cannot ask the user questions) |
+| `scope-scanner` | Spawned by /blueprint orchestrator (both scope inventory stages) | Method-level codebase scope inventory |
 | `scope-verifier` | Spawned by /blueprint orchestrator after each scanner pass | Validates scanner output (max 3 loops) |
-| `plan-reviewer` | After C3 (document mode); dispatcher plan audit gate (queue-audit mode) | Audits plan completeness / criteria verifiability |
+| `plan-reviewer` | At Plan Freeze & Handoff (document mode); dispatcher plan audit gate (queue-audit mode) | Audits plan completeness / criteria verifiability |
 | `planner` | `/objective` → dispatcher | Autonomous DAG decomposition |
 | `analyst` | Dispatcher (ANALYZING) | Research per RQ-X |
 | `executor` | Dispatcher (EXECUTING) | Implements one task (T-XXX) |
@@ -119,16 +135,16 @@ EXECUTING: dispatcher batch per tick
 
 ## Step Positioning Table (Interactive Path)
 
-| Step | Entry Condition | Output | Driven by | Next |
-|------|-----------------|--------|-----------|------|
-| A1 | User triggers /blueprint | Raw requirement | orchestrator (main conversation) | B1 |
-| B1 | Have requirement | Planning doc skeleton + confirmed requirements | orchestrator | B2 (user confirm) |
-| B2 | B1 confirmed | Method-level change scope in plan doc | orchestrator → scope-scanner + scope-verifier | B3 (user confirm) |
-| B3 | B2 confirmed | Discussion outcomes + implementation direction | orchestrator | B4 (user confirm) |
-| B4 | B3 confirmed | Impact scope in plan doc | orchestrator → scope-scanner + scope-verifier | C1 (user confirm) |
-| C1 | B4 confirmed | User confirms task framework | orchestrator | C2 |
-| C2 | C1 confirmed | Each task filled: file paths, steps, verification, test flag | orchestrator | C3 |
-| C3 | C2 complete | Frozen plan + plan-reviewer audit → PASS / RETURN | orchestrator → plan-reviewer | /continue (PASS) or return |
+| Stage | Entry Condition | Output | Driven by | Next |
+|-------|-----------------|--------|-----------|------|
+| Intake | User triggers /blueprint | Raw requirement | orchestrator (main conversation) | Requirements Confirmation |
+| Requirements Confirmation | Have requirement | Planning doc skeleton + confirmed requirements | orchestrator | Change Scope Inventory (user confirm) |
+| Change Scope Inventory | Requirements confirmed | Method-level change scope in plan doc | orchestrator → scope-scanner + scope-verifier | Implementation Direction (user confirm) |
+| Implementation Direction | Change scope confirmed | Discussion outcomes + implementation direction | orchestrator | Impact Scope Inventory (user confirm) |
+| Impact Scope Inventory | Direction confirmed | Impact scope in plan doc | orchestrator → scope-scanner + scope-verifier | Task Framework Confirmation (user confirm) |
+| Task Framework Confirmation | Impact scope confirmed | User confirms task framework | orchestrator | Task Detailing |
+| Task Detailing | Framework confirmed | Each task filled: file paths, steps, verification, test flag | orchestrator | Plan Freeze & Handoff |
+| Plan Freeze & Handoff | Task Detailing complete | Frozen plan + plan-reviewer audit → PASS / RETURN | orchestrator → plan-reviewer | /continue (PASS) or return |
 
 ---
 

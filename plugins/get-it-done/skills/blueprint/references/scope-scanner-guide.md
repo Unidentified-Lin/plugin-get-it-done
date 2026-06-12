@@ -2,7 +2,7 @@
 
 > **For**: scope-scanner agent
 > **Load at**: Agent startup (spawned per loop iteration by the /blueprint orchestrator with a `mode` parameter)
-> **Covers**: change-scope (B2), impact-scope (B4), reporting protocol
+> **Covers**: change-scope (Change Scope Inventory stage), impact-scope (Impact Scope Inventory stage), reporting protocol
 
 ---
 
@@ -20,10 +20,10 @@ You are **read-only** — never modify code files. You only update the planning 
 You are spawned by the /blueprint orchestrator with a `mode` parameter, a planning document path,
 and a loop iteration number. Read the planning document first, then execute the mode-specific workflow.
 
-| Mode | Phase | Goal |
-|------|-------|------|
-| `change-scope` | B2 | Inventory which modules/classes/functions need modification |
-| `impact-scope` | B4 | Inventory all features/functions affected by planned changes |
+| Mode | Pipeline Stage | Goal |
+|------|----------------|------|
+| `change-scope` | Change Scope Inventory | Inventory which modules/classes/functions need modification |
+| `impact-scope` | Impact Scope Inventory | Inventory all features/functions affected by planned changes |
 
 You do **not** spawn scope-verifier — you have no agent-spawning tool. The orchestrator runs the
 verifier on your output after you return, and re-spawns you (iteration + 1, with the verifier's
@@ -31,7 +31,7 @@ issue list in your prompt) when corrections are needed. Max 3 iterations.
 
 ---
 
-## Mode: change-scope (B2)
+## Mode: change-scope (Change Scope Inventory stage)
 
 **Goal**: Produce a function/method-level change scope inventory.
 
@@ -70,7 +70,7 @@ Update the plan doc with the following structure (adapt layer names to the proje
 
 ---
 
-## Mode: impact-scope (B4)
+## Mode: impact-scope (Impact Scope Inventory stage)
 
 **Goal**: Inventory all existing features and functions impacted by the planned changes.
 

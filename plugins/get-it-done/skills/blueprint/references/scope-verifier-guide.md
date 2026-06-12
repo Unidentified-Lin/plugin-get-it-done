@@ -65,7 +65,7 @@ scope-scanner updates plan doc and returns
 
 ---
 
-## Verification Mode: change-scope (B2)
+## Verification Mode: change-scope (Change Scope Inventory stage)
 
 Go through each item. Mark ✅ (pass) or ❌ (fail) with a brief note.
 
@@ -78,7 +78,7 @@ Go through each item. Mark ✅ (pass) or ❌ (fail) with a brief note.
 
 ---
 
-## Verification Mode: impact-scope (B4)
+## Verification Mode: impact-scope (Impact Scope Inventory stage)
 
 Go through each item. Mark ✅ (pass) or ❌ (fail) with a brief note.
 
@@ -108,19 +108,19 @@ Go through each item. Mark ✅ (pass) or ❌ (fail) with a brief note.
 When issues are found, add HTML comment annotations to the plan doc at the relevant location:
 
 ```
-<!-- scope-verifier(B2): [CRITICAL] OrderService.calculateTotal does not exist — actual function is calculateOrderTotal. Loop 1/3 -->
+<!-- scope-verifier(change-scope): [CRITICAL] OrderService.calculateTotal does not exist — actual function is calculateOrderTotal. Loop 1/3 -->
 ```
 
 ```
-<!-- scope-verifier(B4): [MAJOR] Missing PaymentGateway.refund — this function calls the modified processPayment. Loop 2/3 -->
+<!-- scope-verifier(impact-scope): [MAJOR] Missing PaymentGateway.refund — this function calls the modified processPayment. Loop 2/3 -->
 ```
 
 General format:
 ```
-<!-- scope-verifier({step}): [CRITICAL|MAJOR|MINOR] {description of issue}. Loop {N}/3 -->
+<!-- scope-verifier({mode}): [CRITICAL|MAJOR|MINOR] {description of issue}. Loop {N}/3 -->
 ```
 
-Where `{step}` is `B2` for `change-scope` mode or `B4` for `impact-scope` mode.
+Where `{mode}` is your verification mode: `change-scope` or `impact-scope`.
 
 ### Summary Annotation (MANDATORY — always write regardless of verdict)
 
@@ -128,12 +128,12 @@ After completing verification, **always** add a summary annotation at the end of
 
 On PASS:
 ```
-<!-- scope-verifier({step}): ✅ PASS — all checks passed. Loop {N}/3 -->
+<!-- scope-verifier({mode}): ✅ PASS — all checks passed. Loop {N}/3 -->
 ```
 
 On RETURN:
 ```
-<!-- scope-verifier({step}): ❌ RETURN — {count} Critical, {count} Major issues found. Loop {N}/3 -->
+<!-- scope-verifier({mode}): ❌ RETURN — {count} Critical, {count} Major issues found. Loop {N}/3 -->
 ```
 
 **This summary annotation is non-negotiable.**

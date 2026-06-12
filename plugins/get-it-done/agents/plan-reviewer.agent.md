@@ -2,11 +2,11 @@
 name: plan-reviewer
 description: >-
   Audits a plan before execution begins. Two modes: (1) document mode — audits
-  the frozen /blueprint planning document after the user confirms the task list
-  (C3), returning PASS or a precise return path (B1 / B2 / B3 / C2); (2)
-  queue-audit mode — audits the autonomous planner's task_queue.md + metrics.md
-  before the dispatcher flips PLANNING → EXECUTING, checking DAG sanity and
-  acceptance-criteria verifiability.
+  the frozen /blueprint planning document at Plan Freeze & Handoff, returning
+  PASS or a precise return path (Requirements Confirmation / Implementation
+  Direction / Task Detailing); (2) queue-audit mode — audits the autonomous
+  planner's task_queue.md + metrics.md before the dispatcher flips PLANNING →
+  EXECUTING, checking DAG sanity and acceptance-criteria verifiability.
 model: sonnet
 tools: Read, Glob, Grep
 maxTurns: 15
@@ -24,7 +24,7 @@ Your spawn prompt declares one of two modes. Default to **document mode** when n
 
 Then read `{plugin-root}/skills/blueprint/references/plan-reviewer-guide.md`.
 
-## Mode 1: document mode (interactive path — /blueprint C3)
+## Mode 1: document mode (interactive path — /blueprint Plan Freeze & Handoff)
 
 Your task prompt includes:
 1. The absolute path to the planning document to review
@@ -37,7 +37,7 @@ Go through every checklist item. Do not skip any item. For each item mark ✅ (p
 Be strict: vague implementation steps, placeholder file paths, or missing task coverage are **Major** issues. Do not approve documents with Major or Critical problems.
 
 **Output** — the structured format defined in `plan-reviewer-guide.md`:
-- Verdict: PASS / RETURN TO C2 / RETURN TO B3 / RETURN TO B1
+- Verdict: PASS / RETURN TO TASK DETAILING / RETURN TO IMPLEMENTATION DIRECTION / RETURN TO REQUIREMENTS CONFIRMATION
 - Table of all issues found (location, description, severity, return path)
 - One-sentence next action
 

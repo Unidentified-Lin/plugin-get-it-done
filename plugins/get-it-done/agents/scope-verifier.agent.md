@@ -3,9 +3,10 @@ name: scope-verifier
 description: >-
   Independently validates scope-scanner's output for correctness and completeness
   during the interactive planning phase. Operates in two verification modes:
-  change-scope (B2) and impact-scope (B4). Returns a structured verification
-  report with pass/fail verdict to the /blueprint orchestrator, which re-spawns
-  scope-scanner for correction when needed (up to 3 loops).
+  change-scope (Change Scope Inventory stage) and impact-scope (Impact Scope
+  Inventory stage). Returns a structured verification report with pass/fail
+  verdict to the /blueprint orchestrator, which re-spawns scope-scanner for
+  correction when needed (up to 3 loops).
 model: sonnet
 tools: Read, Glob, Grep
 maxTurns: 15
@@ -44,11 +45,11 @@ Read `scope-verifier-guide.md` first. It contains your complete verification che
 
 Return the structured **Scope Verification Report** as defined in `scope-verifier-guide.md`:
 
-- **PASS** — all checks pass (or only Minor issues). **Write a PASS summary annotation** (`<!-- scope-verifier({step}): ✅ PASS ... -->`) to the plan doc, then report goes back to the orchestrator.
+- **PASS** — all checks pass (or only Minor issues). **Write a PASS summary annotation** (`<!-- scope-verifier({mode}): ✅ PASS ... -->`) to the plan doc, then report goes back to the orchestrator.
 - **RETURN_TO_SCANNER** — Critical/Major issues found and loop < 3. Annotate the plan document with issue comments and summary annotation at the relevant locations, then return the report — the orchestrator re-spawns the scanner with your issue list.
 - **RETURN_TO_PLANNER** — Critical/Major issues found and loop >= 3. Annotate the plan document, then return the full issue list so the orchestrator can escalate to the user.
 
-Where `{step}` = `B2` for `change-scope` or `B4` for `impact-scope`.
+Where `{mode}` = your verification mode: `change-scope` or `impact-scope`.
 
 **⚠️ A summary annotation is MANDATORY in all verdicts** — the orchestrator uses it to confirm verification was executed.
 

@@ -1,8 +1,12 @@
 # Plan Reviewer Guide — Audit Rules and Return Path Decisions
 
 > **For**: plan-reviewer agent
-> **Load at**: Agent startup (triggered automatically after C3 confirmation)
+> **Load at**: Agent startup (triggered automatically after the user confirms Plan Freeze & Handoff)
 > **Covers**: Completeness audit, severity grading, return path decisions
+>
+> Return paths refer to the blueprint pipeline stages: Requirements Confirmation →
+> Change Scope Inventory → Implementation Direction → Impact Scope Inventory →
+> Task Framework Confirmation → Task Detailing → Plan Freeze & Handoff
 
 ---
 
@@ -71,11 +75,11 @@ For each task:
 
 | Issue | Severity | Return Path |
 |-------|----------|-------------|
-| Task steps are vague / file paths are placeholders | **Major** | Return to C2 |
-| Missing tasks for scoped areas | **Major** | Return to C2 |
-| 各變更點實作方向 does not cover all items in 異動範圍（詳細） | **Major** | Return to C2 |
-| 需求重點 is still vague / acceptance criteria not captured | **Critical** | Return to B1 |
-| Chosen solution is technically wrong or risky | **Critical** | Return to B3 |
+| Task steps are vague / file paths are placeholders | **Major** | Return to Task Detailing |
+| Missing tasks for scoped areas | **Major** | Return to Task Detailing |
+| 各變更點實作方向 does not cover all items in 異動範圍（詳細） | **Major** | Return to Task Detailing |
+| 需求重點 is still vague / acceptance criteria not captured | **Critical** | Return to Requirements Confirmation |
+| Chosen solution is technically wrong or risky | **Critical** | Return to Implementation Direction |
 | Minor wording issues (no impact on implementation) | **Minor** | Fix in-place |
 
 ---
@@ -85,17 +89,17 @@ For each task:
 ```
 Audit complete
   │
-  ├─ All ✅ → Pass → Tell planner: "規劃文件審核通過，可進入執行"
+  ├─ All ✅ → Pass → Tell the orchestrator: "規劃文件審核通過，可進入執行"
   │
   ├─ Minor issues only → Fix in-place in the document → Re-audit → Pass
   │
-  ├─ Major issues (C2 level) → Return to C2
+  ├─ Major issues (task-detail level) → Return to Task Detailing
   │   Message: "以下任務細節不足，請補充後重新提交審核：\n{list}"
   │
-  ├─ Critical: solution wrong → Return to B3
+  ├─ Critical: solution wrong → Return to Implementation Direction
   │   Message: "實作方向有重大疑慮，請重新提案：\n{issue}"
   │
-  └─ Critical: requirement misunderstood → Return to B1
+  └─ Critical: requirement misunderstood → Return to Requirements Confirmation
       Message: "需求理解可能有偏差，請重新澄清：\n{issue}"
 ```
 
@@ -104,13 +108,13 @@ Audit complete
 ## Output Format
 
 ```
-## Plan Review Result: {PASS / RETURN TO C2 / RETURN TO B3 / RETURN TO B1}
+## Plan Review Result: {PASS / RETURN TO TASK DETAILING / RETURN TO IMPLEMENTATION DIRECTION / RETURN TO REQUIREMENTS CONFIRMATION}
 
 ### Issues Found
 
 | # | Location | Issue | Severity | Return Path |
 |---|----------|-------|----------|-------------|
-| 1 | Task 2 — 實作步驟 | "修改相關程式碼" is not actionable | Major | C2 |
+| 1 | Task 2 — 實作步驟 | "修改相關程式碼" is not actionable | Major | Task Detailing |
 
 ### Next Action
 {One sentence describing what needs to happen next}

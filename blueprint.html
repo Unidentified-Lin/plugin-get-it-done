@@ -184,10 +184,10 @@ body.light-mode .section-divider .sd-line { background: #e2e8f0; }
 
 <div class="page-header">
   <h1>🧭 /blueprint — 互動式規劃路徑</h1>
-  <p class="subtitle">get-it-done · A → B → C 漸進式規劃 × human-in-the-loop × 凍結計畫後交給 /continue</p>
+  <p class="subtitle">get-it-done · Intake → Requirements → Scope → Direction → Tasks → Freeze 漸進式規劃 × human-in-the-loop × 凍結計畫後交給 /continue</p>
   <div class="badges">
     <span class="badge badge-purple">Interactive Path</span>
-    <span class="badge badge-blue">interactive-planner 主導</span>
+    <span class="badge badge-blue">主對話 orchestrator 主導</span>
     <span class="badge badge-green">6 個使用者確認迴圈</span>
   </div>
 </div>
@@ -199,18 +199,18 @@ body.light-mode .section-divider .sd-line { background: #e2e8f0; }
 
 <div class="legend-wrapper">
   <div class="legend">
-    <span class="legend-row-label">Phase</span>
-    <div class="legend-item"><div class="legend-dot" style="background:#94a3b8"></div>A 輸入解析</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div>B 規劃文件（範圍 / 方向）</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div>C 任務拆解 / 凍結</div>
+    <span class="legend-row-label">Stage</span>
+    <div class="legend-item"><div class="legend-dot" style="background:#94a3b8"></div>Intake 輸入解析</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#8b5cf6"></div>Planning 規劃文件（需求 / 範圍 / 方向）</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#10b981"></div>Task Breakdown 任務拆解 / 凍結</div>
     <div class="legend-divider"></div>
     <div class="legend-item"><div class="legend-dot round" style="background:#fbbf24"></div>User Checkpoint</div>
     <div class="legend-item"><span class="loop-badge">Loop①</span> 使用者確認迴圈</div>
   </div>
   <div class="legend">
     <span class="legend-row-label">Model</span>
-    <div class="legend-item"><span class="model-badge model-premium">claude-opus-4-7</span> interactive-planner（主規劃）</div>
-    <div class="legend-item"><span class="model-badge model-standard">claude-sonnet-4-6</span> scope-scanner / scope-verifier / plan-reviewer</div>
+    <div class="legend-item"><span class="model-badge model-premium">主對話 session</span> /blueprint orchestrator（主規劃）</div>
+    <div class="legend-item"><span class="model-badge model-standard">sonnet</span> scope-scanner / scope-verifier / plan-reviewer</div>
   </div>
 </div>
 
@@ -218,91 +218,91 @@ body.light-mode .section-divider .sd-line { background: #e2e8f0; }
 
 <!-- ENTRY -->
 <div class="checkpoint-detail" style="border-color:rgba(139,92,246,0.3); background:rgba(139,92,246,0.05); max-width:1400px;">
-  <div class="cp-title" style="color:#c4b5fd;">🧭 入口：<code style="font-family:'Cascadia Code',monospace">/blueprint</code> — 觸發 interactive-planner（maxTurns 60），讀 main-flow.md 全管線圖後開始</div>
+  <div class="cp-title" style="color:#c4b5fd;">🧭 入口：<code style="font-family:'Cascadia Code',monospace">/blueprint</code> — 由主對話 orchestrator 直接驅動（sub-agent 無法向使用者提問），讀 main-flow.md 全管線圖後開始</div>
   <div style="font-size:0.74rem; color:#64748b; line-height:1.5;">用於想在開工前親自審閱計畫、逐輪確認範圍與設計決策時。產出 human-reviewed 凍結計畫文件 + 任務檔，並初始化 <code style="font-family:monospace">.get-it-done/</code> 執行狀態，再交給 <code style="font-family:monospace">/continue</code> 自主執行。</div>
 </div>
 
 <div class="v-connector"><div class="line"></div><div class="arrow">▼</div></div>
 
-<!-- ══════════ PHASE A ══════════ -->
+<!-- ══════════ STAGE: INTAKE ══════════ -->
 <div class="phase phase-a">
   <div class="phase-header">
-    <span class="phase-num">A · INPUT</span>
-    <span class="phase-title">輸入解析（A1）</span>
+    <span class="phase-num">INTAKE</span>
+    <span class="phase-title">Intake（輸入解析）</span>
     <span class="phase-desc">工單 ID / 自然語言 / 空呼叫 三種輸入型態</span>
   </div>
   <div class="agents-row">
     <div class="agent-card" style="max-width:360px">
       <div class="agent-icon">🧭</div>
-      <div class="agent-name">interactive-planner</div>
-      <div class="model-badge model-premium">claude-opus-4-7</div>
-      <div class="agent-role">辨識輸入型態，讀工單 body + 驗收標準（只讀不寫回），記下歧義留待 B1 釐清</div>
+      <div class="agent-name">/blueprint orchestrator</div>
+      <div class="model-badge model-premium">主對話 session</div>
+      <div class="agent-role">辨識輸入型態，讀工單 body + 驗收標準（只讀不寫回），記下歧義留待 Requirements Confirmation 釐清</div>
       <div class="skills-sep"></div>
-      <div class="step-label">A1 — Input Parsing</div>
+      <div class="step-label">Intake — Input Parsing</div>
       <div class="skill-item">Ticket ID → 讀 body + AC</div>
       <div class="skill-item">自然語言 → 直接用</div>
       <div class="skill-item">空呼叫 → 問「你想開發什麼功能？」</div>
     </div>
   </div>
-  <div class="data-output"><span class="out-icon">📤</span> Output → <code>raw requirement</code>（含歧義標記）→ 進入 B1</div>
+  <div class="data-output"><span class="out-icon">📤</span> Output → <code>raw requirement</code>（含歧義標記）→ 進入 Requirements Confirmation</div>
 </div>
 
 <div class="v-connector"><div class="line"></div><div class="arrow">▼</div></div>
 
-<!-- ══════════ PHASE B ══════════ -->
-<div class="section-divider"><div class="sd-line"></div><span class="sd-text">B · 規劃文件（漸進填充 + 使用者確認迴圈）</span><div class="sd-line"></div></div>
+<!-- ══════════ PLANNING STAGES ══════════ -->
+<div class="section-divider"><div class="sd-line"></div><span class="sd-text">PLANNING · 規劃文件（漸進填充 + 使用者確認迴圈）</span><div class="sd-line"></div></div>
 
 <div class="phase phase-b">
   <div class="phase-header">
-    <span class="phase-num">B1 · B3</span>
-    <span class="phase-title">需求確認 &amp; 實作方向（interactive-planner 主導）</span>
-    <span class="phase-desc">B1 需求釐清 ←Loop① · B3 逐題討論 ←Loop③ + 方向定案 ←Loop④</span>
+    <span class="phase-num">REQUIREMENTS · DIRECTION</span>
+    <span class="phase-title">需求確認 &amp; 實作方向（orchestrator 主導）</span>
+    <span class="phase-desc">Requirements Confirmation 需求釐清 ←Loop① · Implementation Direction 逐題討論 ←Loop③ + 方向定案 ←Loop④</span>
   </div>
   <div class="agents-row">
     <div class="agent-card" style="max-width:360px">
       <div class="agent-icon">🧭</div>
-      <div class="agent-name">interactive-planner</div>
-      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="agent-name">/blueprint orchestrator</div>
+      <div class="model-badge model-premium">主對話 session</div>
       <div class="agent-role">建立計畫文件骨架，精煉需求、界定大範圍，與使用者逐輪確認；再逐題討論實作方向直到定案</div>
       <div class="skills-sep"></div>
-      <div class="step-label">B1 — 需求確認 <span class="loop-badge">Loop①</span></div>
+      <div class="step-label">Requirements Confirmation — 需求確認 <span class="loop-badge">Loop①</span></div>
       <div class="write-item">docs/plans/{xxx}-plan/{xxx}-plan.md 骨架</div>
       <div class="skill-item">精煉需求重點 + 界定異動大項</div>
-      <div class="step-label">B3 — 實作方向 <span class="loop-badge">Loop③</span><span class="loop-badge">Loop④</span></div>
+      <div class="step-label">Implementation Direction — 實作方向 <span class="loop-badge">Loop③</span><span class="loop-badge">Loop④</span></div>
       <div class="skill-item">產生討論清單</div>
       <div class="skill-item">逐題討論（per topic）→ 方向定案</div>
     </div>
   </div>
-  <div class="loop-note">🔁 <strong>B1 / B3 為使用者確認迴圈：</strong>需求與方向必須經使用者確認才前進（無法從需求判定範圍時必須詢問使用者）。這是 /blueprint 的 human-in-the-loop 核心。</div>
+  <div class="loop-note">🔁 <strong>Requirements / Direction 為使用者確認迴圈：</strong>需求與方向必須經使用者確認才前進（無法從需求判定範圍時必須詢問使用者）。這是 /blueprint 的 human-in-the-loop 核心。</div>
 </div>
 
-<div class="v-connector"><div class="vlabel">B2 change-scope · B4 impact-scope</div><div class="line"></div><div class="arrow">▼</div></div>
+<div class="v-connector"><div class="vlabel">Change Scope Inventory · Impact Scope Inventory</div><div class="line"></div><div class="arrow">▼</div></div>
 
 <div class="phase phase-b">
   <div class="phase-header">
-    <span class="phase-num">B2 · B4</span>
-    <span class="phase-title">範圍盤點（scope-scanner ⇄ scope-verifier）</span>
-    <span class="phase-desc">B2 要改什麼（change-scope）←Loop② · B4 影響什麼（impact-scope）←Loop⑤</span>
+    <span class="phase-num">SCOPE INVENTORIES</span>
+    <span class="phase-title">範圍盤點（orchestrator 驅動 scope-scanner → scope-verifier）</span>
+    <span class="phase-desc">Change Scope 要改什麼 ←Loop② · Impact Scope 影響什麼 ←Loop⑤</span>
   </div>
   <div class="agents-row">
     <div class="agent-card">
       <div class="agent-icon">👾</div>
       <div class="agent-name">scope-scanner</div>
-      <div class="model-badge model-standard">claude-sonnet-4-6</div>
+      <div class="model-badge model-standard">sonnet</div>
       <div class="agent-role">產出 method-level 範圍盤點；寫入計畫文件前一律以 glob / grep 驗證檔案路徑</div>
       <div class="skills-sep"></div>
       <div class="skills-label">Two modes</div>
-      <div class="skill-item">B2 change-scope（要改什麼）</div>
-      <div class="skill-item">B4 impact-scope（影響什麼）</div>
+      <div class="skill-item">change-scope（要改什麼）</div>
+      <div class="skill-item">impact-scope（影響什麼）</div>
     </div>
 
-    <div class="agent-arrow-h">⇄<br>max 3</div>
+    <div class="agent-arrow-h">→</div>
 
     <div class="agent-card">
       <div class="agent-icon">👻</div>
       <div class="agent-name">scope-verifier</div>
-      <div class="model-badge model-standard">claude-sonnet-4-6</div>
-      <div class="agent-role">獨立驗證 scanner 輸出的正確性與完整性，最多 3 次校正迴圈後升級回 planner</div>
+      <div class="model-badge model-standard">sonnet</div>
+      <div class="agent-role">獨立驗證 scanner 輸出的正確性與完整性；發現問題時由 orchestrator 帶 issue list 重派 scanner（最多 3 輪）</div>
       <div class="skills-sep"></div>
       <div class="skills-label">Verify</div>
       <div class="skill-item">change-scope 驗證</div>
@@ -313,57 +313,57 @@ body.light-mode .section-divider .sd-line { background: #e2e8f0; }
 
     <div class="agent-card">
       <div class="agent-icon">🧭</div>
-      <div class="agent-name">interactive-planner</div>
-      <div class="model-badge model-premium">claude-opus-4-7</div>
-      <div class="agent-role">把驗證後的範圍寫入計畫文件並呈現給使用者確認</div>
+      <div class="agent-name">/blueprint orchestrator</div>
+      <div class="model-badge model-premium">主對話 session</div>
+      <div class="agent-role">驅動 scanner→verifier 迴圈，把驗證後的範圍呈現給使用者確認</div>
       <div class="skills-sep"></div>
       <div class="step-label">呈現範圍 <span class="loop-badge">Loop②</span><span class="loop-badge">Loop⑤</span></div>
       <div class="write-item">plan.md · 異動範圍 / 影響範圍</div>
     </div>
   </div>
-  <div class="info-note">🔍 <strong>scanner ⇄ verifier 內部迴圈（≤3）：</strong>scope-scanner spawn scope-verifier 驗證，最多 3 次校正後升級；通過後才由 planner 呈現給使用者做 Loop②/⑤ 確認。</div>
+  <div class="info-note">🔍 <strong>scanner → verifier 校正迴圈（≤3，orchestrator 驅動）：</strong>orchestrator 先 spawn scope-scanner，再 spawn scope-verifier 驗證；有 Critical/Major 問題就帶著 issue list 重派 scanner，最多 3 輪後升級給使用者決定。通過後才呈現給使用者做 Loop②/⑤ 確認。</div>
   <div class="data-output"><span class="out-icon">📤</span> Output → 計畫文件填入 <code>異動範圍（method-level）</code> + <code>影響範圍</code></div>
 </div>
 
-<div class="v-connector"><div class="vlabel">B4 confirmed</div><div class="line"></div><div class="arrow">▼</div></div>
+<div class="v-connector"><div class="vlabel">Impact Scope confirmed</div><div class="line"></div><div class="arrow">▼</div></div>
 
-<!-- ══════════ PHASE C ══════════ -->
-<div class="section-divider"><div class="sd-line" style="background:rgba(16,185,129,0.2)"></div><span class="sd-text" style="color:#34d399">C · 任務拆解 → 稽核 → 凍結</span><div class="sd-line" style="background:rgba(16,185,129,0.2)"></div></div>
+<!-- ══════════ TASK BREAKDOWN STAGES ══════════ -->
+<div class="section-divider"><div class="sd-line" style="background:rgba(16,185,129,0.2)"></div><span class="sd-text" style="color:#34d399">TASK BREAKDOWN · 任務拆解 → 稽核 → 凍結</span><div class="sd-line" style="background:rgba(16,185,129,0.2)"></div></div>
 
 <div class="phase phase-c">
   <div class="phase-header">
-    <span class="phase-num">C1 · C2 · C3</span>
+    <span class="phase-num">TASK FRAMEWORK · DETAILING · FREEZE</span>
     <span class="phase-title">任務拆解與凍結（plan-reviewer 把關）</span>
-    <span class="phase-desc">C1 確認任務框架 ←Loop⑥ · C2 外科式調查填充每個任務 · C3 凍結 + 稽核</span>
+    <span class="phase-desc">Task Framework 確認任務框架 ←Loop⑥ · Task Detailing 外科式調查填充每個任務 · Plan Freeze &amp; Handoff 凍結 + 稽核</span>
   </div>
   <div class="agents-row">
     <div class="agent-card" style="max-width:320px">
       <div class="agent-icon">🧭</div>
-      <div class="agent-name">interactive-planner</div>
-      <div class="model-badge model-premium">claude-opus-4-7</div>
+      <div class="agent-name">/blueprint orchestrator</div>
+      <div class="model-badge model-premium">主對話 session</div>
       <div class="agent-role">與使用者確認任務框架，逐一外科式調查 codebase 並填充每個任務（檔案路徑、步驟、驗證、測試旗標）</div>
       <div class="skills-sep"></div>
-      <div class="step-label">C1 任務框架 <span class="loop-badge">Loop⑥</span></div>
-      <div class="step-label">C2 填充每個任務</div>
+      <div class="step-label">Task Framework Confirmation <span class="loop-badge">Loop⑥</span></div>
+      <div class="step-label">Task Detailing 填充每個任務</div>
       <div class="write-item">tasks/{n:02d}-{slug}-task.md</div>
     </div>
 
-    <div class="agent-arrow-h">→ <span class="cp-label">C3</span></div>
+    <div class="agent-arrow-h">→ <span class="cp-label">Freeze</span></div>
 
     <div class="agent-card">
       <div class="agent-icon">📋</div>
       <div class="agent-name">plan-reviewer</div>
-      <div class="model-badge model-standard">claude-sonnet-4-6</div>
+      <div class="model-badge model-standard">sonnet</div>
       <div class="agent-role">凍結前稽核計畫完整性、正確性、可執行性，回傳 pass/fail 與精確返回路徑</div>
       <div class="skills-sep"></div>
       <div class="skills-label">Audit verdict</div>
-      <div class="skill-item">PASS / RETURN(C2·B3·B1)</div>
+      <div class="skill-item">PASS / RETURN（Task Detailing · Direction · Requirements）</div>
     </div>
 
-    <!-- C3 decision gate -->
+    <!-- Plan Freeze & Handoff decision gate -->
     <div class="decision-gate">
       <div class="decision-gate-node">
-        <strong>🔀 C3 — plan-reviewer 稽核閘門</strong>
+        <strong>🔀 Plan Freeze &amp; Handoff — plan-reviewer 稽核閘門</strong>
         <div class="cond">完整性 / 正確性 / 可執行性 ?</div>
       </div>
       <div class="decision-branches">
@@ -375,7 +375,7 @@ body.light-mode .section-divider .sd-line { background: #e2e8f0; }
         <div class="decision-branch">
           <div class="branch-connector"></div>
           <div class="branch-label no">RETURN</div>
-          <div class="branch-box no">回 C2 任務細節<br>／ B3 方案方向<br>／ B1 需求</div>
+          <div class="branch-box no">回 Task Detailing 任務細節<br>／ Implementation Direction 方案方向<br>／ Requirements Confirmation 需求</div>
         </div>
       </div>
     </div>
@@ -388,7 +388,7 @@ body.light-mode .section-divider .sd-line { background: #e2e8f0; }
 <div class="checkpoint-detail" style="border-color:rgba(59,130,246,0.3); background:rgba(59,130,246,0.05);">
   <div class="cp-title" style="color:#93c5fd;">🤝 Handoff → <code style="font-family:'Cascadia Code',monospace">/continue</code></div>
   <div style="font-size:0.74rem; color:#64748b; line-height:1.6;">
-    plan-reviewer PASS 後，planner 凍結文件、初始化 <code style="font-family:monospace">.get-it-done/</code> 狀態，並告知使用者執行 <code style="font-family:monospace">/continue</code>。
+    plan-reviewer PASS 後，orchestrator 凍結文件、初始化 <code style="font-family:monospace">.get-it-done/</code> 狀態，並告知使用者執行 <code style="font-family:monospace">/continue</code>。
     自此進入<strong>自主執行管線</strong>（與 /objective 共用同一個 dispatcher）—— 詳見
     <a href="objective.html" style="color:#93c5fd;">objective.html</a> 與
     <a href="state-machine.html" style="color:#93c5fd;">state-machine.html</a>。
@@ -400,11 +400,11 @@ body.light-mode .section-divider .sd-line { background: #e2e8f0; }
 <div class="stats-bar">
   <h3>📊 互動規劃路徑統計</h3>
   <div class="stats-grid">
-    <div class="stat-card stat-purple"><div class="num">4</div><div class="label">參與 Agents</div></div>
+    <div class="stat-card stat-purple"><div class="num">3</div><div class="label">Sub-agents（+ 主對話 orchestrator）</div></div>
     <div class="stat-card stat-amber"><div class="num">6</div><div class="label">使用者確認迴圈 ①–⑥</div></div>
     <div class="stat-card stat-blue"><div class="num">2</div><div class="label">scope 模式（change / impact）</div></div>
-    <div class="stat-card stat-green"><div class="num">3</div><div class="label">scanner⇄verifier 校正上限</div></div>
-    <div class="stat-card stat-slate"><div class="num">A·B·C</div><div class="label">規劃管線階段</div></div>
+    <div class="stat-card stat-green"><div class="num">3</div><div class="label">scanner→verifier 校正上限</div></div>
+    <div class="stat-card stat-slate"><div class="num">8</div><div class="label">規劃階段（Intake → Freeze &amp; Handoff）</div></div>
   </div>
 </div>
 
