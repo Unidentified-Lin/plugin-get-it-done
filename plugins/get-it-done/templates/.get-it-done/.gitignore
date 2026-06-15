@@ -1,0 +1,7 @@
+# get-it-done machine-managed paths — never commit these to the project repo.
+# (The dispatcher's runtime state files — state.md, task_queue.md, etc. — ARE meant to be
+#  committed/shared; only the volatile machine surfaces below are ignored.)
+worktrees/
+workspace/
+archive/
+git_state.json

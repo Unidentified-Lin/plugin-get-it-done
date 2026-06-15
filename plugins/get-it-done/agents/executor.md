@@ -68,7 +68,18 @@ Sub-paths within your scratch dir are yours to organize. You MUST NOT write to:
 - Any other executor's scratch dir.
 - Any `.get-it-done/` file outside your scratch (no editing PRD, task_queue, state.md, etc.).
 
-For code tasks that need to modify the project's main source tree (not artifact-style deliverables but real code edits), you may write directly to project source paths — but in that case set `artifact: <main file or summary doc>` in your agent-return and ALSO leave a one-page summary at `.get-it-done/workspace/exec-<task_id>/CHANGES.md` listing every file you touched and why. The Validator needs that summary to know where to look.
+## Worktree mode (source tasks)
+
+When your spawn prompt includes a `worktree:` line, you are running in **git-worktree isolation** — the recommended mode for any task that edits the project's source tree:
+
+- **All source code edits go inside the worktree** at the given path. Your task's `Touches` paths map into it (e.g. `Touches: ["src/auth.ts"]` → edit `<worktree>/src/auth.ts`). Run build / test / lint with **cwd = the worktree**.
+- **All get-it-done state** (task_queue, metrics, prd, and your scratch dir `workspace/exec-<task_id>/`) is read and written via the **`repo_root` path** the prompt gives you — `repo_root/.get-it-done/...`. **Ignore the worktree's own `.get-it-done/` copy entirely** — it is a stale checkout; reading it would mislead you and the dispatcher guarantees nothing you do there reaches history.
+- **Dependencies** (`node_modules`, etc.) are pre-linked into the worktree. If a command fails for a missing dependency, install it inside the worktree.
+- **Do NOT run any `git` command** (no commit/branch/push/stash) — the dispatcher owns all git. Just edit files.
+- **Rework**: your worktree persists across attempts and already holds your prior attempt; address the root causes from the latest `Validation Results` on top of it.
+- You still write your `CHANGES.md` summary and any artifact to `repo_root/.get-it-done/workspace/exec-<task_id>/` (outside the worktree), and set `artifact:` to it.
+
+In **fallback (non-git) mode only** (no `worktree:` in your prompt), for code tasks that modify the project's main source tree you may write directly to project source paths — but set `artifact: <main file or summary doc>` in your agent-return and ALSO leave a one-page summary at `.get-it-done/workspace/exec-<task_id>/CHANGES.md` listing every file you touched and why. The Validator needs that summary to know where to look. (If you find yourself editing source this way, your task should have declared `Touches` so it ran isolated — the dispatcher will detect the stray edits and send the task back for rework with `Touches` populated.)
 
 ## Running commands
 

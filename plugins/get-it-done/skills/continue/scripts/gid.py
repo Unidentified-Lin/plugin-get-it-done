@@ -23,10 +23,24 @@ exit code 2 = could not parse required files (dispatcher falls back to manual pr
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 
 GID_DIR = ".get-it-done"
+GIT_STATE_PATH = os.path.join(GID_DIR, "git_state.json")
+WT_ROOT = os.path.join(GID_DIR, "worktrees")
+EXECUTING_TYPES = {"code", "webapp", "test", "api", "infra"}   # build/test-running task types
+DEFAULT_GIT_STATE = {
+    "git_mode": "auto",
+    "commit_granularity": "milestone",
+    "max_worktrees": 8,
+    "link_dirs": ["node_modules"],
+    "goal_base": None,
+    "milestone_bases": {},
+    "worktrees": {},
+}
 
 
 def die(msg):
@@ -296,11 +310,15 @@ def milestone_status(m, tasks):
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
-def cmd_pool(n_max=5):
+def cmd_pool(n_max=5, git_mode="worktree", max_worktrees=8):
     text = read(os.path.join(GID_DIR, "task_queue.md"))
     if text is None:
         die("task_queue.md not found")
     tasks, milestones = parse_task_queue(text)
+
+    gs = load_git_state()
+    existing_wt = len(gs.get("worktrees", {}))   # worktrees currently on disk (worktree mode)
+    new_wt = 0                                    # new worktrees this batch would create
 
     ms_status = {mid: milestone_status(m, tasks) for mid, m in milestones.items()}
     active_ms = None
@@ -353,10 +371,35 @@ def cmd_pool(n_max=5):
         if c:
             deferred.append({"task_id": t["id"], "reason": f"touches conflict with {c}"})
             continue
+        # Worktree hard-cap backpressure: a new (P4) source-touching executor needs a fresh
+        # worktree; defer it if we are already at max. Rework (P3) reuses an existing worktree.
+        if git_mode == "worktree" and t.get("touches") and t["id"] not in gs.get("worktrees", {}):
+            if existing_wt + new_wt >= max_worktrees:
+                deferred.append({"task_id": t["id"], "reason": "wt_cap"})
+                continue
+            new_wt += 1
         pool.append({"role": "executor", "task_id": t["id"],
                      "scratch": f"{GID_DIR}/workspace/exec-{t['id']}/"})
         if t.get("touches"):
             touching.append((t["id"], set(t["touches"])))
+
+    # Fallback (non-git) race guard for #6: a validator that runs build/test cannot share a
+    # batch with a source-touching executor mutating the same shared tree. In worktree mode
+    # this is structurally impossible (each runs in its own worktree), so the guard is skipped.
+    if git_mode == "fallback":
+        def is_exec_validator(item):
+            return (item["role"] == "validator" and item.get("mode") == "task"
+                    and (tasks.get(item["task_id"], {}).get("type") or "").lower() in EXECUTING_TYPES)
+        def is_source_executor(item):
+            return item["role"] == "executor" and bool(tasks.get(item["task_id"], {}).get("touches"))
+        if any(is_exec_validator(i) for i in pool):
+            kept = []
+            for i in pool:
+                if is_source_executor(i):
+                    deferred.append({"task_id": i["task_id"], "reason": "fallback_race_guard"})
+                else:
+                    kept.append(i)
+            pool = kept
 
     statuses = {}
     for t in tasks.values():
@@ -445,19 +488,392 @@ def cmd_truncate_logs():
     print(json.dumps({"results": results}, ensure_ascii=False, indent=2))
 
 
+# ---------------------------------------------------------------- git helpers
+
+def run_git(args, cwd=None):
+    """Run a git command; return (returncode, stdout, stderr).
+    stdout is rstrip'd of trailing newlines ONLY — leading whitespace is significant in
+    `git status --porcelain` (the XY status column), so we must not strip the whole string."""
+    p = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True)
+    return p.returncode, (p.stdout or "").rstrip("\r\n"), (p.stderr or "").strip()
+
+
+def load_git_state():
+    txt = read(GIT_STATE_PATH)
+    state = dict(DEFAULT_GIT_STATE)
+    if txt:
+        try:
+            loaded = json.loads(txt)
+            if isinstance(loaded, dict):
+                state.update(loaded)
+        except (ValueError, TypeError):
+            pass
+    for k, v in DEFAULT_GIT_STATE.items():
+        state.setdefault(k, v)
+    return state
+
+
+def save_git_state(state):
+    os.makedirs(GID_DIR, exist_ok=True)
+    with open(GIT_STATE_PATH, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
+def wt_path(tid):
+    return os.path.join(WT_ROOT, tid)
+
+
+def wt_branch(tid):
+    return "gid/" + tid
+
+
+def load_tasks():
+    txt = read(os.path.join(GID_DIR, "task_queue.md"))
+    if txt is None:
+        return {}, {}
+    return parse_task_queue(txt)
+
+
+def link_one(name, dst_parent):
+    """Best-effort symlink/junction <repo>/name into the worktree. Never fatal."""
+    src = os.path.abspath(name)
+    dst = os.path.join(dst_parent, name)
+    if not os.path.exists(src) or os.path.lexists(dst):
+        return False
+    try:
+        if os.name == "nt":
+            subprocess.run(["cmd", "/c", "mklink", "/J", dst, src],
+                           capture_output=True, text=True)
+        else:
+            os.symlink(src, dst)
+        return True
+    except OSError:
+        return False
+
+
+def scoped_add(wt, link_dirs):
+    """Stage all worktree changes EXCEPT .get-it-done/ and every link_dir (slash-less
+    pathspec — a trailing slash fails past a symlink). This is the load-bearing guard that
+    keeps state churn and symlinked deps out of source commits."""
+    pathspec = [".", ":(exclude).get-it-done"] + [f":(exclude){d}" for d in link_dirs]
+    return run_git(["-C", wt, "add", "-A", "--"] + pathspec)
+
+
+def goal_slug():
+    txt = read(os.path.join(GID_DIR, "goal.md")) or ""
+    m = re.search(r"^##\s*Goal\s*\n+(.+)$", txt, re.M)
+    base = (m.group(1).strip() if m else "goal")[:40]
+    return re.sub(r"[^A-Za-z0-9]+", "-", base).strip("-").lower() or "goal"
+
+
+def upstream_contains_head():
+    """True if HEAD is already on the branch's upstream — rewriting would force-push. Skip then."""
+    rc, up, _ = run_git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+    if rc != 0 or not up:
+        return False
+    rc2, _, _ = run_git(["merge-base", "--is-ancestor", "HEAD", up])
+    return rc2 == 0
+
+
+# ---------------------------------------------------------------- git commands
+
+def cmd_git_preflight():
+    rc, out, _ = run_git(["rev-parse", "--is-inside-work-tree"])
+    is_git = (rc == 0 and out == "true")
+    dirty, head, supported = False, None, False
+    if is_git:
+        _, st, _ = run_git(["status", "--porcelain"])
+        dirty = bool(st)
+        rc3, head_out, _ = run_git(["rev-parse", "HEAD"])
+        head = head_out if rc3 == 0 else None
+        rc4, _, _ = run_git(["worktree", "list"])
+        supported = rc4 == 0
+    print(json.dumps({"is_git": is_git, "dirty": dirty,
+                      "head_sha": head, "worktree_supported": supported}))
+
+
+def cmd_worktree_add(tid):
+    gs = load_git_state()
+    path, branch = wt_path(tid), wt_branch(tid)
+    _, head, _ = run_git(["rev-parse", "HEAD"])
+    if os.path.isdir(path):
+        print(json.dumps({"ok": True, "path": path, "branch": branch, "reused": True}))
+        return
+    os.makedirs(WT_ROOT, exist_ok=True)
+    rcb, _, _ = run_git(["rev-parse", "--verify", "--quiet", branch])
+    if rcb == 0:                                    # branch exists (blocked-retry / crash) → recreate WT
+        rc, _, err = run_git(["worktree", "add", path, branch])
+    else:                                           # first attempt → new branch + WT at HEAD
+        rc, _, err = run_git(["worktree", "add", "-b", branch, path, "HEAD"])
+    if rc != 0:
+        print(json.dumps({"ok": False, "reason": err}))
+        return
+    linked = [d for d in gs.get("link_dirs", []) if link_one(d, path)]
+    gs["worktrees"][tid] = {"branch": branch, "base": head, "created": now_iso()}
+    save_git_state(gs)
+    print(json.dumps({"ok": True, "path": path, "branch": branch,
+                      "base_sha": head, "reused": False, "linked": linked}, ensure_ascii=False))
+
+
+def cmd_worktree_commit_wip(tid, attempt):
+    gs = load_git_state()
+    if tid not in gs.get("worktrees", {}):
+        print(json.dumps({"ok": True, "skipped": "no_worktree"}))
+        return
+    wt = wt_path(tid)
+    scoped_add(wt, gs.get("link_dirs", []))
+    _, staged, _ = run_git(["-C", wt, "diff", "--cached", "--name-only"])
+    if not staged:
+        print(json.dumps({"ok": True, "skipped": "no_changes"}))
+        return
+    rc, _, err = run_git(["-C", wt, "commit", "-m", f"wip({tid}): attempt {attempt}"])
+    if rc != 0:
+        print(json.dumps({"ok": False, "reason": err}))
+        return
+    _, sha, _ = run_git(["-C", wt, "rev-parse", "HEAD"])
+    print(json.dumps({"ok": True, "wip_sha": sha}))
+
+
+def cmd_worktree_merge(tid):
+    gs = load_git_state()
+    branch, wt = wt_branch(tid), wt_path(tid)
+    rcb, _, _ = run_git(["rev-parse", "--verify", "--quiet", branch])
+    if rcb != 0 and tid not in gs.get("worktrees", {}):
+        print(json.dumps({"ok": True, "skipped": "already_merged"}))
+        return
+    # Ensure any last-moment worktree changes are committed to the branch.
+    if os.path.isdir(wt):
+        scoped_add(wt, gs.get("link_dirs", []))
+        _, staged, _ = run_git(["-C", wt, "diff", "--cached", "--name-only"])
+        if staged:
+            run_git(["-C", wt, "commit", "-m", f"wip({tid}): pre-merge"])
+    _, pre_head, _ = run_git(["rev-parse", "HEAD"])
+    rcm, _, _ = run_git(["merge", "--squash", branch])
+    if rcm != 0:
+        _, confl, _ = run_git(["diff", "--name-only", "--diff-filter=U"])
+        run_git(["reset", "--merge"])              # --abort does NOT work after a --squash conflict
+        print(json.dumps({"ok": False, "reason": "conflict",
+                          "files": [f for f in confl.splitlines() if f]}, ensure_ascii=False))
+        return
+    tasks, milestones = load_tasks()
+    title = tasks.get(tid, {}).get("title", "")
+    _, staged, _ = run_git(["diff", "--cached", "--name-only"])
+    if staged:
+        rc, _, err = run_git(["commit", "-m", f"{tid}: {title}"])   # NO -a → excludes .get-it-done churn
+        if rc != 0:
+            print(json.dumps({"ok": False, "reason": err}))
+            return
+        _, commit_sha, _ = run_git(["rev-parse", "HEAD"])
+    else:
+        commit_sha = pre_head                        # empty diff (no-op merge)
+    M = tasks.get(tid, {}).get("milestone")
+    if M and M not in gs["milestone_bases"]:
+        gs["milestone_bases"][M] = pre_head
+    if not gs.get("goal_base"):
+        gs["goal_base"] = pre_head
+    if os.path.isdir(wt):
+        run_git(["worktree", "remove", "--force", wt])
+    run_git(["worktree", "prune"])
+    run_git(["branch", "-D", branch])
+    gs.get("worktrees", {}).pop(tid, None)
+    save_git_state(gs)
+    print(json.dumps({"ok": True, "merged_sha": commit_sha}))
+
+
+def cmd_worktree_drop(tid, keep_branch):
+    gs = load_git_state()
+    wt, branch = wt_path(tid), wt_branch(tid)
+    if os.path.isdir(wt):
+        run_git(["worktree", "remove", "--force", wt])
+    run_git(["worktree", "prune"])
+    if not keep_branch:
+        run_git(["branch", "-D", branch])
+    gs.get("worktrees", {}).pop(tid, None)
+    save_git_state(gs)
+    print(json.dumps({"ok": True}))
+
+
+LIVE_WT_STATUSES = {"claimed", "executed", "validating", "needs_rework"}
+
+
+def cmd_worktree_gc():
+    gs = load_git_state()
+    tasks, _ = load_tasks()
+    live = {tid for tid, t in tasks.items()
+            if t.get("touches") and t.get("status") in LIVE_WT_STATUSES}
+    run_git(["worktree", "prune"])
+    removed, kept = [], []
+    if os.path.isdir(WT_ROOT):
+        for name in sorted(os.listdir(WT_ROOT)):
+            p = os.path.join(WT_ROOT, name)
+            if not os.path.isdir(p):
+                continue
+            if name in live:
+                kept.append(name)
+                continue
+            run_git(["worktree", "remove", "--force", p])
+            if tasks.get(name, {}).get("status") != "blocked":
+                run_git(["branch", "-D", wt_branch(name)])
+            gs.get("worktrees", {}).pop(name, None)
+            removed.append(name)
+    run_git(["worktree", "prune"])
+    save_git_state(gs)
+    print(json.dumps({"removed": removed, "kept": kept}, ensure_ascii=False))
+
+
+def cmd_worktree_reset_all():
+    _, out, _ = run_git(["worktree", "list", "--porcelain"])
+    wt_abs = os.path.abspath(WT_ROOT)
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            p = line[len("worktree "):].strip()
+            if os.path.abspath(p).startswith(wt_abs):
+                run_git(["worktree", "remove", "--force", p])
+    run_git(["worktree", "prune"])
+    _, branches, _ = run_git(["for-each-ref", "--format=%(refname:short)", "refs/heads/gid/"])
+    for b in branches.splitlines():
+        if b.strip():
+            run_git(["branch", "-D", b.strip()])
+    if os.path.isdir(WT_ROOT):
+        shutil.rmtree(WT_ROOT, ignore_errors=True)
+    gs = load_git_state()
+    gs["worktrees"], gs["milestone_bases"], gs["goal_base"] = {}, {}, None
+    save_git_state(gs)
+    print(json.dumps({"ok": True}))
+
+
+def _stray_source_paths(link_dirs):
+    """Lines from git status --porcelain that are source (not .get-it-done/ or a link_dir)."""
+    _, out, _ = run_git(["status", "--porcelain", "--untracked-files=all"])
+    rows = []
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        code, path = line[:2], line[3:].strip().strip('"')
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        norm = path.replace("\\", "/")
+        if norm.startswith(".get-it-done/"):
+            continue
+        if any(norm == d or norm.startswith(d + "/") for d in link_dirs):
+            continue
+        rows.append((code, path))
+    return rows
+
+
+def cmd_check_stray_edits(tid, revert):
+    gs = load_git_state()
+    rows = _stray_source_paths(gs.get("link_dirs", []))
+    dirty = [p for _, p in rows]
+    reverted = False
+    if revert and rows:
+        tracked = [p for code, p in rows if code.strip() != "??"]
+        untracked = [p for code, p in rows if code.strip() == "??"]
+        if tracked:
+            run_git(["checkout", "--"] + tracked)
+        if untracked:
+            run_git(["clean", "-fdq", "--"] + untracked)
+        reverted = True
+    print(json.dumps({"ok": True, "dirty_source": dirty, "reverted": reverted}, ensure_ascii=False))
+
+
+def _consolidate(base, msg_subject, msg_body, label):
+    if not base:
+        print(json.dumps({"ok": True, "skipped": "no_base"}))
+        return
+    if upstream_contains_head():
+        print(json.dumps({"ok": True, "skipped": "upstream"}))
+        return
+    _, cnt, _ = run_git(["rev-list", "--count", f"{base}..HEAD"])
+    if int(cnt or "0") <= 1:
+        print(json.dumps({"ok": True, "skipped": "already_consolidated"}))
+        return
+    run_git(["branch", "-f", f"gid/pre-consolidate-{goal_slug()}", "HEAD"])
+    rc, _, err = run_git(["reset", "--soft", base])
+    if rc != 0:
+        print(json.dumps({"ok": False, "reason": err}))
+        return
+    rc2, _, err2 = run_git(["commit", "-m", msg_subject, "-m", msg_body])
+    if rc2 != 0:
+        print(json.dumps({"ok": False, "reason": err2}))
+        return
+    _, sha, _ = run_git(["rev-parse", "HEAD"])
+    print(json.dumps({"ok": True, "commit_sha": sha, "label": label}, ensure_ascii=False))
+
+
+def cmd_consolidate_milestone(mid):
+    gs = load_git_state()
+    base = gs.get("milestone_bases", {}).get(mid)
+    tasks, milestones = load_tasks()
+    title = milestones.get(mid, {}).get("title", "")
+    body = "\n".join(f"- {tid}: {tasks.get(tid, {}).get('title', '')}"
+                     for tid in milestones.get(mid, {}).get("tasks", []))
+    _consolidate(base, f"{mid}: {title}", body or f"{mid} tasks", mid)
+
+
+def cmd_consolidate_final():
+    gs = load_git_state()
+    base = gs.get("goal_base")
+    _, milestones = load_tasks()
+    goal_txt = read(os.path.join(GID_DIR, "goal.md")) or ""
+    m = re.search(r"^##\s*Goal\s*\n+(.+)$", goal_txt, re.M)
+    subject = (m.group(1).strip() if m else "goal")[:72]
+    body = "\n".join(f"- {mid}: {milestones[mid].get('title', '')}"
+                     for mid in sorted(milestones, key=lambda x: milestones[x].get("num", 0)))
+    _consolidate(base, subject, body or "goal milestones", "final")
+
+
+# ---------------------------------------------------------------- arg helpers
+
+def _flag(name, default=None):
+    if name in sys.argv:
+        i = sys.argv.index(name)
+        return sys.argv[i + 1] if i + 1 < len(sys.argv) else default
+    return default
+
+
+def _positional():
+    """First non-flag token after the subcommand (argv[2]), if it isn't a --flag."""
+    return sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else None
+
+
 # ---------------------------------------------------------------- main
 
 def main():
     if len(sys.argv) < 2:
-        die("usage: gid.py <state|dag-check|pool|rqs|batch-id|truncate-logs>")
+        die("usage: gid.py <state|dag-check|pool|rqs|batch-id|truncate-logs|"
+            "git-preflight|worktree-add|worktree-commit-wip|worktree-merge|worktree-drop|"
+            "worktree-gc|worktree-reset-all|check-stray-edits|consolidate-milestone|consolidate-final>")
     cmd = sys.argv[1]
+    tid = _positional()
+
+    if cmd == "pool":
+        cmd_pool(git_mode=_flag("--git-mode", "worktree"),
+                 max_worktrees=int(_flag("--max-worktrees", "8")))
+        return
+    if cmd == "worktree-add":
+        cmd_worktree_add(tid); return
+    if cmd == "worktree-commit-wip":
+        cmd_worktree_commit_wip(tid, _flag("--attempt", "0")); return
+    if cmd == "worktree-merge":
+        cmd_worktree_merge(tid); return
+    if cmd == "worktree-drop":
+        cmd_worktree_drop(tid, "--keep-branch" in sys.argv); return
+    if cmd == "check-stray-edits":
+        cmd_check_stray_edits(tid, "--revert" in sys.argv); return
+    if cmd == "consolidate-milestone":
+        cmd_consolidate_milestone(tid); return
+
     {
         "state": cmd_state,
         "dag-check": cmd_dag_check,
-        "pool": cmd_pool,
         "rqs": cmd_rqs,
         "batch-id": cmd_batch_id,
         "truncate-logs": cmd_truncate_logs,
+        "git-preflight": cmd_git_preflight,
+        "worktree-gc": cmd_worktree_gc,
+        "worktree-reset-all": cmd_worktree_reset_all,
+        "consolidate-final": cmd_consolidate_final,
     }.get(cmd, lambda: die(f"unknown subcommand: {cmd}"))()
 
 

@@ -134,6 +134,9 @@ rm -f .get-it-done/prd.md
 
 # (5) Remove stale plan-audit file from prior goal (dispatcher rewrites when its audit gate fails)
 rm -f .get-it-done/plan_audit.md
+
+# (6) Wipe any worktrees + gid/* branches from a prior goal (no-op in non-git projects)
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py" worktree-reset-all 2>/dev/null || true
 ```
 
 **Do NOT overwrite** (these accumulate across goals and are preserved):

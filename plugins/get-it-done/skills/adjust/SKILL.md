@@ -186,6 +186,9 @@ OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTI
 
    rm -f .get-it-done/prd.md
    rm -f .get-it-done/plan_audit.md
+
+   # hard reset also wipes worktrees + gid/* branches (soft does NOT — it preserves in-flight work)
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py" worktree-reset-all 2>/dev/null || true
    ```
 
 3. **不動**：`.get-it-done/progress_log.md`、`.get-it-done/validation_log.md`、`.get-it-done/context/*`、`${CLAUDE_PLUGIN_DATA}/team_learnings/*`、`.get-it-done/state.md` 中的 `## Batch` 歷史 block。

@@ -99,6 +99,14 @@ A crash is `status == RUNNING` AND `batch_ended_at == null`. On entry the dispat
 
 Old (pre-v2) state.md files without `schema_version` or `batch_id` are unmigrated. If `/continue` reads a v1 file, it emits an error pointing the user at `/objective` to reset and exits.
 
+## Git isolation (v2.1 — worktree mode)
+
+When the project is a git repo, **source-touching** tasks (those with a non-empty `Touches`) run in their own `git worktree` under `.get-it-done/worktrees/<task_id>/`, on a throwaway branch `gid/<task_id>`. The executor and its validator both operate inside that worktree; the shared main tree is never mutated during sub-agent execution. The dispatcher squash-merges each passing task into main as **one commit per task** (attempt noise stays on the branch), then collapses each validated milestone into **one commit per milestone** (`commit_granularity` config). Non-git projects fall back to direct main-tree edits.
+
+Git bookkeeping lives in **`.get-it-done/git_state.json`** — owned exclusively by `gid.py` (never hand-edited): `git_mode`, `commit_granularity`, `max_worktrees`, `link_dirs`, `goal_base`, `milestone_bases`, and the live `worktrees` map. `git_state.json`, `worktrees/`, `workspace/`, and `archive/` are git-ignored via `.get-it-done/.gitignore`.
+
+**Load-bearing invariant**: per-task→per-milestone commit consolidation (`git reset --soft <milestone_base>`) is exact **only because milestone gating keeps each milestone's task commits contiguous on main** — a task in `M_k` never starts until `M_1..M_{k-1}` are validated. If that gate ever changes, the consolidation math breaks.
+
 ## Agent-return YAML contract
 
 Every sub-agent (executor / validator / analyst — and planner when spawned by dispatcher) MUST end its run by emitting exactly one fenced YAML block of this shape (other prose may surround it but the dispatcher parses only between the two markers):

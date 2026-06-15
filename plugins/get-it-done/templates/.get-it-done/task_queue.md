@@ -48,8 +48,12 @@ Tasks may also carry a `Milestone:` field (e.g. `M1`). When all tasks in a miles
 - **Status**: pending
 - **Milestone**: M1
 - **Dependencies**: []                  # list of task IDs; empty when none
-- **Touches**: []                        # [STAGE 5+] optional list of file/dir paths this task modifies
-                                        # (used by dispatcher for collision detection in heterogeneous batches)
+- **Touches**: []                        # list of file/dir paths this task modifies. Two uses:
+                                        #  (1) collision detection in heterogeneous batches;
+                                        #  (2) non-empty Touches ⇒ "source-touching" ⇒ the task runs in an
+                                        #      isolated git worktree (git mode). A code task that edits source
+                                        #      MUST declare Touches, or the dispatcher's stray-edit guard sends
+                                        #      it back for rework with Touches populated.
 - **Claimed_by**: null
 - **Claimed_at**: null
 - **PRD-Ref**: Feature 3.2, NFR 6.1     # or "none" when no PRD applies

@@ -72,6 +72,7 @@ plugins/get-it-done/
 - **Milestone-level validation**: Integration-level acceptance criteria on top of per-task validation
 - **Crash recovery**: Three sub-cases (PLANNING timeout, sub-agent interrupted, batch close interrupted) with idempotency guarantees
 - **Collision detection**: Source-path overlaps prevented via `Touches` field + dispatcher pool check
+- **Per-task git-worktree isolation**: Each source-touching task runs in its own `git worktree`; its validator builds/tests there too (no cross-task race), then squash-merges to main as one commit — failed attempts roll back cleanly. Worktrees are auto-reaped + hard-capped. Per-milestone commit consolidation. Non-git projects fall back gracefully
 - **Autopilot with planned pauses**: Dispatcher runs to COMPLETE without context-budget yields; planner decides pause checkpoints at planning time via `PauseAfter: true` on milestones (e.g. UX review, real-world testing). Soft pause — next /continue resumes naturally
 - **Dual-tier learning**: A-side rules survive plugin updates (cross-project); B-side rules live in `.get-it-done/context/` (project-specific)
 - **Full 繁體中文 compliance**: All CLI output in Traditional Chinese
@@ -103,4 +104,4 @@ cat .get-it-done/context/domain_knowledge.md       # Project learnings
 
 ---
 
-**Version**: 1.1.1 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin
+**Version**: 1.2.0 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin

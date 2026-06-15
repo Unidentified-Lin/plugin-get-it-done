@@ -29,6 +29,8 @@
 
 Milestone status 由 dispatcher 每 tick 從 per-task statuses + Claimed_by + 最新 Validation Results **推導**，無持久化的 `Status:` 欄位，避免 stale-failed 問題。
 
+**Git 隔離（git 專案）**：每個 source-touching task（`Touches` 非空）在自己的 `git worktree`（`.get-it-done/worktrees/<T>`）中執行，其 validator 也在同一 worktree 跑 build/test —— 平行的 executor 無法污染彼此的工作樹（結構性解決驗證競態）。通過後 squash-merge 進 main 為**單一 commit**；每個 milestone 驗證通過後收整為**單一 commit**。worktree 每 tick 自動回收、有硬上限、目標重置時清空；失敗的嘗試可乾淨回滾。所有 git 操作由 `gid.py` 執行，狀態記在 `.get-it-done/git_state.json`。非 git 專案 fallback 為直接編輯 + 排程防護。
+
 派發器是 v2 的 **唯一 shared-state writer**：sub-agents 不直接寫 `state.md` / `task_queue.md` / log 檔，而是透過 `---agent-return---` 結構化 YAML 區塊把結果交回。Dispatcher 解析後 atomic 持久化，並在 batch 結束時 append 一個 `## Batch <id>` 區塊到 `state.md` 底部作為歷史紀錄。Reflector 不在 relay 內、不發 agent-return（其輸出就是學習檔的寫入本身）。
 
 ### Crash recovery

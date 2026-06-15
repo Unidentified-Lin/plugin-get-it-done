@@ -208,6 +208,16 @@ There is no Skill tool. Read the target skill's `SKILL.md` from the plugin root 
 
 ---
 
+## 9.5. Git worktree operations (autonomous EXECUTING)
+
+In git projects the dispatcher isolates each source-touching task in its own `git worktree` under `.get-it-done/worktrees/<task_id>/` (gitignored). **All git work is done by `gid.py`** (`worktree-add/-commit-wip/-merge/-drop/-gc/-reset-all`, `consolidate-milestone/-final`, `check-stray-edits`) — so the only cross-platform difference is the Python invocation (`python3`, fall back to `python` on Windows), identical to Step 0.5.
+
+Dependency dirs (`node_modules`, …) are linked into each worktree so build/test run without reinstalling:
+- **macOS / Linux**: `os.symlink` (symbolic link).
+- **Windows**: directory junction `mklink /J` — works on local NTFS **without admin or Developer Mode** (only symbolic links `/D` need elevation). `gid.py` picks the right one automatically.
+
+Non-git projects (or when `git-preflight` reports git unusable) fall back to direct main-tree edits — no worktrees, no rollback — plus a Step-5 scheduling guard that keeps build-running validators out of the same batch as source executors.
+
 ## 10. Quick Decision Table
 
 | Operation | Claude Code | Copilot (macOS/Linux) | Copilot (Windows) |

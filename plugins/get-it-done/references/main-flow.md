@@ -112,6 +112,14 @@ EXECUTING: dispatcher batch per tick
   - needs_rework → re-executor
   - milestone all done → milestone validator
   Batch size ≤ 5, heterogeneous agents per batch.
+
+Git isolation (git projects): each source-touching task runs in its own
+git worktree (.get-it-done/worktrees/<T>); executor + its validator operate
+there, so a parallel executor can never corrupt a validator's build. On pass,
+the task squash-merges into main as ONE commit; each validated milestone
+consolidates to ONE commit. Worktrees are reaped every tick, hard-capped, and
+wiped on goal reset. Non-git projects fall back to direct edits + a scheduling
+guard. All git work is done by gid.py; bookkeeping in .get-it-done/git_state.json.
 ```
 
 ---
