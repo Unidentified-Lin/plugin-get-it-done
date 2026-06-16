@@ -46,19 +46,28 @@ python3 "$GID" state    # smoke test; on Windows try `python` if `python3` is ab
 - The script also owns all **git operations** (worktree isolation + commit consolidation, see Steps 0.6/6/9): `git-preflight`, `worktree-add|-commit-wip|-merge|-drop|-gc|-reset-all`, `check-stray-edits`, `consolidate-milestone|-final`. These mutate the repo and `git_state.json`; you call them, the script does the deterministic git work and returns `{ok: ...}`.
 - The script is read-only for `.get-it-done/*.md` state — every write to `state.md` / `task_queue.md` / `research_requests.md` remains yours. (`git_state.json` is the script's own; never hand-edit it.)
 
-## Step 0.6: Git mode + worktree reaper
+## Step 0.6: Git mode + goal worktree + reaper
 
 ```
 preflight := python3 "$GID" git-preflight
 IF preflight.is_git AND preflight.worktree_supported:
     git_mode := worktree
+    python3 "$GID" goal-worktree-init      # idempotent — creates the per-goal "main" worktree
+                                           # .get-it-done/worktrees/_goal on branch gid/goal-<slug>
+                                           # from the user's HEAD, with a shared .get-it-done symlink.
+                                           # ALL goal source changes accumulate there; the user's own
+                                           # branch + working tree stay clean. Re-asserts the symlink on crash.
 ELSE:
     git_mode := fallback
     append once-per-goal "<ISO> [GIT_FALLBACK] non-git/unusable; source executors write the main tree directly (no rollback)" to progress_log.md
-python3 "$GID" worktree-gc      # reaper: prune git metadata + remove any worktree not tied to a live task (crash orphans, leftover done/blocked). Idempotent.
+max_parallel := git_state.json `max_parallel` (default 1)
+python3 "$GID" worktree-gc      # reaper: prune git metadata + remove any TASK worktree not tied to a live task. NEVER reaps _goal. Idempotent.
 ```
 
-`git_mode` is passed to Step 5's `pool` and decides Step 6/7/9 worktree behavior. In `worktree` mode, #6 (validator↔executor build race) is structurally impossible — each runs in its own worktree. In `fallback` mode, Step 5's pool applies a scheduling guard instead.
+`git_mode` + `max_parallel` drive Step 5/6/7/9:
+- **`git_mode=worktree` + `max_parallel=1` (default)** ⇒ every source task runs **sequentially in the `_goal` worktree** — no per-task worktree, no per-task merge. Executor and validator for a task share `_goal`.
+- **`max_parallel>1`** ⇒ when a batch would run ≥2 source executors at once, each gets a **task worktree** branched from `gid/goal-<slug>`, squash-merged back into `gid/goal-<slug>` on validator pass.
+- In `worktree` mode, #6 (validator↔executor build race) is structurally impossible — each runs in its own worktree (or `_goal` sequentially). In `fallback` mode, Step 5's pool applies a scheduling guard instead.
 
 ## Step 1: Schema version check
 
@@ -147,7 +156,7 @@ ELSE:
     proceed to step 3
 ```
 
-**Worktree-mode crash safety**: re-spawned executors reuse their existing worktree (`worktree-add` is idempotent), and Step 0.6's reaper already removed any worktree whose task is no longer live. Per-task `worktree-merge` is atomic and idempotent (returns `skipped: already_merged` if the branch is gone), so a crash between merges loses nothing durable and never double-merges. A benign duplicate `worktree-commit-wip --attempt N` after re-spawn is skipped by its no-change detection.
+**Worktree-mode crash safety**: `goal-worktree-init` is idempotent — it reuses an existing `_goal` and re-asserts the shared-`.get-it-done` symlink after a crash. Sequential `goal-commit-task` no-ops on no changes; parallel `worktree-add` reuses an existing task worktree; `worktree-merge` is atomic and returns `skipped: already_merged` if the branch is gone, so a crash between merges loses nothing durable and never double-merges. Step 0.6's reaper removes orphaned TASK worktrees (never `_goal`). A benign duplicate `worktree-commit-wip --attempt N` after re-spawn is skipped by its no-change detection.
 
 This split closes the validator-rerun edge case automatically — sub-case B never re-spawns a validator whose verdict already landed in `validation_log.md`, so the `(task_id, attempt_no)` dedup never has to arbitrate two different verdicts on the same attempt. Re-spawn (sub-case A) is safe by the idempotency rules in `.get-it-done/state.md` (executor scratch dir keyed by task_id; Attempts not yet incremented; validation_log dedup on `(task_id, attempt_no)` / `(milestone_id, attempt_no)`; analyst writes to a per-RQ file `.get-it-done/findings/RQ-X.md` that overwrites cleanly on re-run because `Status: open` still holds — a fulfilled RQ is never re-spawned).
 
@@ -192,8 +201,8 @@ This is defensive; planner self-audit should catch this first, but the dispatche
 
 ## Step 5: Pick the actionable batch (Stage 3: heterogeneous, up to N work items)
 
-**Script path** (EXECUTING phase): `python3 "$GID" pool --git-mode <git_mode> --max-worktrees 8` computes everything below deterministically — derived milestone statuses, the priority-ordered pool (P1→P4) with Touches collision deferral, the worktree hard-cap / fallback race guard, and the first-5 `batch` slice. Map its output to the decisions:
-- `batch` non-empty → that IS your batch; log each `deferred` entry as `<ISO> [DEFER] <task_id> <reason>` (reasons: `touches conflict with ...`, `wt_cap` = worktree hard-cap backpressure, `fallback_race_guard` = #6 guard in non-git mode); GOTO Step 6.
+**Script path** (EXECUTING phase): `python3 "$GID" pool --git-mode <git_mode> --max-worktrees 8 --max-parallel <max_parallel>` computes everything below deterministically — derived milestone statuses, the priority-ordered pool (P1→P4) with Touches collision deferral, the sequentiality cap, the worktree hard-cap / fallback race guard, and the first-5 `batch` slice. Map its output to the decisions:
+- `batch` non-empty → that IS your batch; log each `deferred` entry as `<ISO> [DEFER] <task_id> <reason>` (reasons: `touches conflict with ...`, `max_parallel` = more source executors than `max_parallel` allows this tick, `wt_cap` = task-worktree hard-cap backpressure, `fallback_race_guard` = #6 guard in non-git mode); GOTO Step 6.
 - `batch` empty AND `all_done_and_validated: true` → set phase = REPORTING; run report_and_reflect(); EXIT.
 - `batch` empty AND `any_blocked: true` → set phase = AWAITING_HUMAN; EXIT with blocked-task summary.
 - `batch` empty AND `any_in_flight: true` → stale claim; re-enter Step 2 logic.
@@ -368,7 +377,9 @@ Rewrite state.md YAML block (preserving everything below the block):
 
 Then for **every** item in `batch` (do all claims atomically inside one task_queue.md rewrite — multiple Edit calls in the same assistant turn before the spawn message is fine, but they MUST all complete before Step 7):
 
-- `executor` item: set the task's `Claimed_by: exec-<task_id>`, `Claimed_at: <ISO now>`, `Status: claimed`. Do NOT touch `Attempts` yet. Ensure `.get-it-done/workspace/exec-<task_id>/` exists. **In `worktree` git_mode, if the task is source-touching (`Touches` non-empty)**, call `python3 "$GID" worktree-add <task_id>` and note the returned `path` (idempotent — reuses an existing worktree on crash-recovery / rework; recreates from the surviving branch for a blocked-retry).
+- `executor` item: set the task's `Claimed_by: exec-<task_id>`, `Claimed_at: <ISO now>`, `Status: claimed`. Do NOT touch `Attempts` yet. Ensure `.get-it-done/workspace/exec-<task_id>/` exists. **Worktree assignment** (worktree git_mode, source-touching task):
+  - **Sequential** (`max_parallel<=1`, OR this batch has only 1 source executor): the task's worktree IS `_goal` — `.get-it-done/worktrees/_goal`. Do NOT call `worktree-add`.
+  - **Parallel** (`max_parallel>1` AND this batch has ≥2 source executors): call `python3 "$GID" worktree-add <task_id>` (branches `gid/<task_id>` from `gid/goal-<slug>`) and note the returned `path` (idempotent — reuses an existing worktree on crash-recovery / rework; recreates from the surviving branch for a blocked-retry).
 - `validator` item with `mode: task`: set the task's `Claimed_by: val-<task_id>`, `Claimed_at: <ISO now>`, `Status: validating`.
 - `validator` item with `mode: milestone`: in the `## Milestones` section of task_queue.md, set the milestone's `Claimed_by: mval-<milestone_id>`, `Claimed_at: <ISO now>`. The tasks inside the milestone keep their `Status: done` — milestone-mode validation does NOT touch per-task status fields directly (Step 9 may flip them to needs_rework based on `task_ids_to_rework` in the agent-return). The milestone has no persisted `Status:` field; derivation in Step 5 will see `Claimed_by != null` and return `"validating"`.
 - `analyst` item: in `.get-it-done/research_requests.md`, set the matching RQ entry's `Claimed_by: analyst-<RQ-id>`, `Claimed_at: <ISO now>`. Leave `Status: open` (it flips to `fulfilled` on persist in Step 9). Do all RQ claims in the same rewrite as the state.md atomic pre-write.
@@ -390,7 +401,7 @@ Inputs for this run:
   scratch: <item.scratch>                 (executor only — your write surface)
   batch_id: <batch_id>
   repo_root: <abs path to project root>   (worktree-mode source executors/validators only)
-  worktree: .get-it-done/worktrees/<T>     (worktree-mode source executors/validators only — cwd here for code/build/test)
+  worktree: <_goal path OR task worktree path>   (worktree-mode source executors/validators only — cwd here for code/build/test)
 
 Read your declared inputs, perform your work, write your artifacts to the paths listed in your
 role definition (executor → scratch dir; analyst → .get-it-done/findings/<req_id>.md; planner →
@@ -408,7 +419,9 @@ The dispatcher persists shared state based on your agent-return.
 
 Use `subagent_type: get-it-done:<role>` (namespaced form to avoid any bare-name collision with other plugins or user-registered roles).
 
-**Worktree-mode source items** (executor or task-validator for a source-touching task in `worktree` git_mode): include the `repo_root` + `worktree` lines above, and add this instruction: "Make all source-code edits and run all build/test commands inside `worktree` (cwd there). Read/write ALL get-it-done state and your scratch dir via `repo_root/.get-it-done/...` — ignore the worktree's own `.get-it-done/` copy. Do NOT run any git command; the dispatcher owns git." Milestone-mode validators and all non-source items omit both lines (they operate on `repo_root` / their scratch as before).
+**Platform note — sub-agents MUST run isolated, not inline** (see `platform-adapter.md` Section 4). On Claude Code the `Agent` tool guarantees this. On **GitHub Copilot CLI**, delegate to the discoverable custom agent **by name** (e.g. `get-it-done-executor`) and instruct it to run in its own context and return only its `---agent-return---` block — otherwise Copilot runs the work inline and breaks the relay. If Copilot does not run delegations concurrently, spawn fewer at once (down to one-at-a-time); flow control is unaffected.
+
+**Worktree-mode source items** (executor or task-validator for a source-touching task in `worktree` git_mode): set `worktree` to the path from Step 6 — the `_goal` worktree (`.get-it-done/worktrees/_goal`) in sequential mode, or the task worktree (`.get-it-done/worktrees/<T>`) in parallel mode. The executor and its validator for the same task always get the SAME worktree. Include the `repo_root` + `worktree` lines above, and add this instruction: "Make all source-code edits and run all build/test commands inside `worktree` (cwd there). Its `.get-it-done/` is a **symlink to the repo-root `.get-it-done/`** — read/write all get-it-done state and your scratch dir through it (equivalently via `repo_root/.get-it-done/...`); they are the same files. Do NOT run any git command; the dispatcher owns git." Milestone-mode validators run on the `_goal` worktree (the goal branch holds the merged source); all non-source items omit both lines (they operate on `repo_root` / their scratch as before).
 
 The dispatcher waits for ALL items to return before proceeding to Step 8. There is no per-item early collection — Claude Code returns all parallel Task results together when the slowest one finishes.
 
@@ -457,14 +470,17 @@ For each well-formed return (BAD_RETURN items skip this and just have Claimed_by
 - Set `Status: blocked` if return.status == failed (executor cannot complete) — also append `[BLOCKER] T-XXX: <notes>` to progress_log.md. **In worktree mode**, `python3 "$GID" worktree-drop T-XXX --keep-branch` (remove the worktree, keep `gid/T-XXX` for forensics).
 - Append `<ISO> [EXEC_DONE] T-XXX attempt=N artifact=<path> status=<status>` to progress_log.md.
 - **Git (worktree mode), when Status became `executed`:**
-  - If the task is **source-touching**: `python3 "$GID" worktree-commit-wip T-XXX --attempt <Attempts>` (durably commits the worktree's changes to `gid/T-XXX`; no-ops cleanly if unchanged or no worktree).
-  - Else (**no `Touches`** — possible under-declaration): run the stray-edit guard `python3 "$GID" check-stray-edits T-XXX --revert`. If `dirty_source` is non-empty, the planner under-declared `Touches`: append those paths to the task's `Touches` field (you own task_queue), append `<ISO> [TOUCHES_UNDERDECLARED] T-XXX <paths>` to progress_log.md, and set `Status: needs_rework` (clear `Artifact`). The `--revert` already removed the stray edits from main, so nothing lingers — the rework re-runs isolated in a real worktree next tick.
+  - **Sequential source task** (ran in `_goal`): no git call now — the edits sit in `_goal`'s working tree and are committed on validator PASS (below). The `_goal` worktree is never reaped mid-goal, so executor→validator share it (fixes the early-reap issue).
+  - **Parallel source task** (had its own task worktree): `python3 "$GID" worktree-commit-wip T-XXX --attempt <Attempts>` (durably commits the task worktree's changes to `gid/T-XXX`; no-ops cleanly if unchanged).
+  - **No `Touches`** (artifact-only, possible under-declaration): run the stray-edit guard `python3 "$GID" check-stray-edits T-XXX --revert`. If `dirty_source` is non-empty, the planner under-declared `Touches`: append those paths to the task's `Touches` field (you own task_queue), append `<ISO> [TOUCHES_UNDERDECLARED] T-XXX <paths>` to progress_log.md, and set `Status: needs_rework` (clear `Artifact`). The `--revert` already removed the stray edits, so nothing lingers — the rework re-runs in `_goal`/a task worktree next tick.
 
 **Validator return (`mode: task`):**
 - Append a new entry to the task's `Validation Results` array with `{ attempt_no: <Attempts at time of this run>, verdict, fail_reasons, escalate_to_blocked, notes, at }`.
 - Append a `VAL-XXX` entry to `.get-it-done/validation_log.md` (next monotonic VAL number; dedup-key is `(task_id, attempt_no)` — if an entry with that key exists, skip the append).
 - Clear `Claimed_by`, `Claimed_at`.
-- If `verdict == pass`: set `Status: done`. **In worktree mode, if the task is source-touching**: `python3 "$GID" worktree-merge T-XXX`. On `{ok:true}` the task is now one squash commit on main (worktree + branch removed). On `{ok:false, reason:"conflict", files:[...]}` → set `Status: needs_rework` instead of done, clear `Artifact`, append `<ISO> [MERGE_CONFLICT] T-XXX <files>` to progress_log.md, and carry the conflict files into the next rework as a fail-reason (the worktree is kept for the retry).
+- If `verdict == pass`: set `Status: done`. **In worktree mode, if the task is source-touching**, commit it onto the goal branch:
+  - **Sequential** (ran in `_goal`): `python3 "$GID" goal-commit-task T-XXX` → one commit on `gid/goal-<slug>` (no-ops on no changes).
+  - **Parallel** (own task worktree): `python3 "$GID" worktree-merge T-XXX` → squash-merge into `gid/goal-<slug>` (worktree + branch removed). On `{ok:false, reason:"conflict", files:[...]}` → set `Status: needs_rework` instead of done, clear `Artifact`, append `<ISO> [MERGE_CONFLICT] T-XXX <files>` to progress_log.md, and carry the conflict files into the next rework as a fail-reason (the task worktree is kept for the retry).
 - If `verdict == fail` AND `escalate_to_blocked == false`: set `Status: needs_rework`, clear `Artifact`. (Worktree mode: keep the worktree — the rework reuses it.)
 - If `verdict == fail` AND `escalate_to_blocked == true`: set `Status: blocked`. Append `[BLOCKER] T-XXX escalated by validator after N attempts` to progress_log.md. **In worktree mode**: `python3 "$GID" worktree-drop T-XXX --keep-branch`.
 
@@ -600,7 +616,7 @@ Reflector is NOT part of the relay. It runs once per goal, after every task reac
 2. Append to .get-it-done/progress_log.md:
      "<ISO> [GOAL_COMPLETE] <goal one-liner>. <N> tasks completed across <M> milestones; first-pass rate <X>/<Y>. Key deliverables: <bullet list of .get-it-done/workspace/exec-*/ artifact paths>."
 3. Rewrite state.md YAML: phase=COMPLETE, status=WAITING, batch_id=null, batch_started_at=null, batch_ended_at=null, active_agents=[], last_updated=<ISO>. Remove the most recent `## Batch` block IFF its `next_phase == REPORTING` (it's now stale).
-4. Emit the [GOAL_COMPLETE] paragraph to the user (including the ⚠️ 人工確認清單 when step 1.5 found degraded validations). In worktree mode, add a line "原始碼歷史：<N> commits（每 milestone 一個）" from `git log --oneline <goal_base>..HEAD`.
+4. Emit the [GOAL_COMPLETE] paragraph to the user (including the ⚠️ 人工確認清單 when step 1.5 found degraded validations). In worktree mode, report the goal branch and that the user's own branch is untouched: read `goal_branch` from git_state.json and add — "原始碼變更已累積在分支 `<goal_branch>`（<N> commits，每 milestone 一個；`git log --oneline <goal_base>..<goal_branch>`）。你的工作分支與工作目錄未被更動 —— 請自行 review / merge / 開 PR 此分支。" **Do NOT auto-merge into the user's branch.** Leave the `_goal` worktree and `gid/goal-<slug>` branch in place (only `/objective` or `/adjust hard` wipes them).
 5. Spawn reflector via Agent tool. Prompt: "Execute your reflector role per agents/reflector.md. The goal just COMPLETE'd. Analyse validation_log + progress_log + the most recent batch handoffs. Update A-side and B-side learnings per your classification matrix. Do NOT change .get-it-done/state.md phase. Do NOT emit an agent-return block — your output is the file writes themselves."
 6. Reflector returns; EXIT. Reflection failures are logged ([REFLECT_FAIL]) but do NOT roll back COMPLETE.
 ```

@@ -1,5 +1,11 @@
 # Implementation Plan — Worktree Isolation, Auto-Reaper & Commit Consolidation (#5 + #6)
 
+> **Superseded in part by v1.3.0** — the per-task worktree model below was reworked into a
+> **per-goal "main worktree"** model after real-world feedback. See the "v1.3.0 Goal-Worktree
+> Rework" section at the bottom of this file. The mechanics here (sparse/scoped-add, squash,
+> soft-reset consolidation, conflict recovery) still hold; what changed is WHERE they run
+> (one `_goal` worktree on `gid/goal-<slug>`, shared symlinked `.get-it-done/`, sequential by default).
+
 **Status**: Implemented (v1.2.0). Verified by two adversarial review rounds with real git experiments (`[V1]`/`[V2]` fixes folded in), then built across Phases A–C and tested against real git fixtures. `gid.py` git subcommands all pass; SKILL/agent/template/doc wiring complete.
 **Scope**: #5 (per-task git isolation + rollback), #6 (validation race), commit consolidation
 **Out of scope**: #7 (cross-session lock) — deferred per user
@@ -231,3 +237,31 @@ Add "## Git worktree operations": worktrees live under `.get-it-done/worktrees/<
 - `node` resolves a symlinked `node_modules`; but `git add -A` WILL stage a `node_modules` symlink unless excluded (slash pattern `node_modules/` does not match the symlink file) — hence the scoped exclude add.
 - `mklink /J` needs no elevation; `python3`/`python` invocation matches existing Step 0.5.
 - gid.py's parser already exposes every field the new commands need; new subcommands slot into `main()` without reworking existing functions. All SKILL Steps the plan edits exist and the edits don't contradict the pool P1–P4, milestone gating, or the plan-audit gate.
+
+---
+
+# v1.3.0 Goal-Worktree Rework (7 real-world issues)
+
+Real-world use surfaced 7 issues; addressed here (issue 7 cross-project deferred). Decisions taken with the user: **root + symlinks** topology, **sequential by default** (`max_parallel=1`), **fix Copilot invocation**, **defer cross-project**. Design validated by two adversarial review rounds with real git experiments; one BLOCKER (consolidation rewriting the user's branch when `_goal` is absent) was caught and fixed.
+
+## Model
+One **goal worktree** `_goal` at `.get-it-done/worktrees/_goal/` on `gid/goal-<slug>` (from the user's HEAD), created at `/continue` Step 0.6. ALL goal source accumulates there; the user's own branch + working tree stay clean → concurrent goals/sessions on one repo. Every worktree's `.get-it-done/` is a **symlink** to the single repo-root `.get-it-done/` (sparse-checkout excludes the tracked copy; `scoped_add` + assume-unchanged + info/exclude keep it out of commits and `git status`).
+- **Sequential** (`max_parallel=1`): each source task runs in `_goal`; validator PASS → `goal-commit-task` = one commit on the goal branch. Executor + validator share `_goal` (fixes the early-reap of issue 3).
+- **Parallel** (`max_parallel>1`): ≥2 source executors → per-task worktrees branched from the goal branch, squash-merged back into it on pass.
+- Milestone consolidation = `git reset --soft <milestone_base>` on the goal branch, **no backup ref** (issue 5 — intermediate commits → reflog only).
+- Completion: `gid/goal-<slug>` left for the user to review/merge/PR; **never auto-merged**.
+
+## Issue → fix map
+1. **Copilot inline spawning** → `platform-adapter.md` §4 rewrite: agents must be discoverable as Copilot custom agents (`~/.copilot/agents/*.agent.md`, install snippet provided) and delegated **by name**; parallelism caveat; verification procedure. Dispatcher Step 7 + blueprint spawn notes updated.
+2. **No per-goal isolation** → `goal-worktree-init` (`_goal` on `gid/goal-<slug>`).
+3. **Task worktree reaped before validator** → sequential tasks share `_goal` (never reaped mid-goal); `worktree-gc` skips `_goal`.
+4. **Sequential needn't open per-task worktrees** → `max_parallel=1` default; `cmd_pool --max-parallel` caps concurrent source executors; task worktrees only when `>1`.
+5. **Consolidation kept intermediate commits** → removed the `gid/pre-consolidate-*` backup ref.
+6. **`.get-it-done/` copied per worktree** → physical symlink-to-root via `setup_shared_gid` (sparse + symlink + info/exclude + assume-unchanged).
+7. **Cross-project** → deferred.
+
+## gid.py (verified against real git fixtures)
+New: `setup_shared_gid`, `goal-worktree-init`, `goal-commit-task`. Modified: `worktree-add` (branch from goal branch), `worktree-merge` (squash INTO goal branch via `-C _goal`; `already_merged` when branch gone), `_consolidate` (run on goal branch; **refuse if `_goal` absent** — never rewrite the user's branch; no backup ref), `worktree-gc` (never reap `_goal`), `worktree-reset-all` (wipe `_goal` + `gid/goal-*`/`gid/T-*` only — preserve a user's own `gid/<x>`; clear goal fields), `cmd_pool` (`--max-parallel`). `git_state.json` gains `max_parallel`, `goal_slug`, `goal_branch`; `goal_base` redefined = user's HEAD at init (set once).
+
+## Verified-correct (real git experiments, both review rounds)
+Shared-`.get-it-done` symlink with clean `git status` and zero leakage into commits; user branch + working tree untouched across full sequential flow; no backup ref after consolidation; parallel merges land on the goal branch (not user HEAD); conflict → `git reset --merge` clean, task worktree kept; `max_parallel` caps source executors (P3+P4), `wt_cap` only when `>1`; `gc` never reaps `_goal`; `reset-all` wipes `_goal`/goal branch and preserves user `gid/` branches; idempotent re-init keeps the actual branch across goal-text drift; **consolidation refuses (no-op) when `_goal` is absent — the BLOCKER fix, proven to leave the user's commits intact.**

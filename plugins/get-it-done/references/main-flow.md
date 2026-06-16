@@ -113,13 +113,18 @@ EXECUTING: dispatcher batch per tick
   - milestone all done → milestone validator
   Batch size ≤ 5, heterogeneous agents per batch.
 
-Git isolation (git projects): each source-touching task runs in its own
-git worktree (.get-it-done/worktrees/<T>); executor + its validator operate
-there, so a parallel executor can never corrupt a validator's build. On pass,
-the task squash-merges into main as ONE commit; each validated milestone
-consolidates to ONE commit. Worktrees are reaped every tick, hard-capped, and
-wiped on goal reset. Non-git projects fall back to direct edits + a scheduling
-guard. All git work is done by gid.py; bookkeeping in .get-it-done/git_state.json.
+Git isolation (git projects, goal-worktree model): at goal start the dispatcher
+creates ONE _goal worktree on branch gid/goal-<slug> (from the user's HEAD); ALL
+goal source accumulates there, so the user's own branch/working tree stay clean
+and concurrent goals can share a repo. Sequential by default (max_parallel=1):
+each task runs in _goal, executor + its validator share it; validator PASS commits
+one commit on the goal branch. max_parallel>1: parallel source tasks get per-task
+worktrees branched from the goal branch, merged back on pass. Each validated
+milestone consolidates to ONE commit on the goal branch (no intermediate commits
+kept). Every worktree shares one symlinked .get-it-done/. At completion the goal
+branch is left for the user to review/merge (never auto-merged). Non-git projects
+fall back to direct edits + a scheduling guard. All git work is done by gid.py;
+bookkeeping in .get-it-done/git_state.json.
 ```
 
 ---

@@ -29,7 +29,7 @@
 
 Milestone status 由 dispatcher 每 tick 從 per-task statuses + Claimed_by + 最新 Validation Results **推導**，無持久化的 `Status:` 欄位，避免 stale-failed 問題。
 
-**Git 隔離（git 專案）**：每個 source-touching task（`Touches` 非空）在自己的 `git worktree`（`.get-it-done/worktrees/<T>`）中執行，其 validator 也在同一 worktree 跑 build/test —— 平行的 executor 無法污染彼此的工作樹（結構性解決驗證競態）。通過後 squash-merge 進 main 為**單一 commit**；每個 milestone 驗證通過後收整為**單一 commit**。worktree 每 tick 自動回收、有硬上限、目標重置時清空；失敗的嘗試可乾淨回滾。所有 git 操作由 `gid.py` 執行，狀態記在 `.get-it-done/git_state.json`。非 git 專案 fallback 為直接編輯 + 排程防護。
+**Git 隔離（git 專案，v1.3.0 goal-worktree）**：每個目標在開始時建立一個 **`_goal` 主 worktree**（`.get-it-done/worktrees/_goal`，分支 `gid/goal-<slug>`，從使用者 HEAD 切出）。**整個目標的原始碼異動都累積在這裡** —— 使用者自己的分支與工作目錄保持乾淨，因此不同目標/session 可同時改同一個 repo。預設**循序**（`max_parallel=1`）：每個 task 在 `_goal` 內執行，executor 與其 validator 共用同一 worktree；通過後在 goal 分支上 commit 一筆。`max_parallel>1` 時，平行的 source task 各自開 task worktree（從 goal 分支切出、完成後 squash-merge 回 goal 分支）。每個 milestone 驗證通過收整為 goal 分支上**單一 commit**（不保留中間 commit）。所有 worktree 共用**同一份** symlink 的 `.get-it-done/`。目標完成後 `gid/goal-<slug>` 留給使用者自行 review/merge/PR（不自動合併）。所有 git 操作由 `gid.py` 執行，狀態記在 `.get-it-done/git_state.json`。非 git 專案 fallback 為直接編輯 + 排程防護。
 
 派發器是 v2 的 **唯一 shared-state writer**：sub-agents 不直接寫 `state.md` / `task_queue.md` / log 檔，而是透過 `---agent-return---` 結構化 YAML 區塊把結果交回。Dispatcher 解析後 atomic 持久化，並在 batch 結束時 append 一個 `## Batch <id>` 區塊到 `state.md` 底部作為歷史紀錄。Reflector 不在 relay 內、不發 agent-return（其輸出就是學習檔的寫入本身）。
 

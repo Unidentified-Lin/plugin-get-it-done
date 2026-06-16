@@ -135,7 +135,9 @@ rm -f .get-it-done/prd.md
 # (5) Remove stale plan-audit file from prior goal (dispatcher rewrites when its audit gate fails)
 rm -f .get-it-done/plan_audit.md
 
-# (6) Wipe any worktrees + gid/* branches from a prior goal (no-op in non-git projects)
+# (6) Wipe the prior goal's worktrees (the _goal main worktree + any task worktrees) and all
+#     gid/* branches (no-op in non-git projects). The new goal's _goal worktree is created fresh
+#     by the dispatcher at /continue Step 0.6 (single creation site, derives the slug from goal.md).
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py" worktree-reset-all 2>/dev/null || true
 ```
 

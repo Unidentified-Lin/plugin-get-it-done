@@ -31,13 +31,17 @@ from datetime import datetime, timezone
 GID_DIR = ".get-it-done"
 GIT_STATE_PATH = os.path.join(GID_DIR, "git_state.json")
 WT_ROOT = os.path.join(GID_DIR, "worktrees")
+GOAL_WT = "_goal"                                              # the per-goal "main" worktree dir name
 EXECUTING_TYPES = {"code", "webapp", "test", "api", "infra"}   # build/test-running task types
 DEFAULT_GIT_STATE = {
     "git_mode": "auto",
     "commit_granularity": "milestone",
     "max_worktrees": 8,
+    "max_parallel": 1,            # sequential by default — tasks run in the _goal worktree
     "link_dirs": ["node_modules"],
-    "goal_base": None,
+    "goal_slug": None,            # slug derived from goal.md
+    "goal_branch": None,          # "gid/goal-<slug>" — where ALL goal source changes accumulate
+    "goal_base": None,            # the user's HEAD when the goal worktree was created (set once)
     "milestone_bases": {},
     "worktrees": {},
 }
@@ -310,15 +314,17 @@ def milestone_status(m, tasks):
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
-def cmd_pool(n_max=5, git_mode="worktree", max_worktrees=8):
+def cmd_pool(n_max=5, git_mode="worktree", max_worktrees=8, max_parallel=1):
     text = read(os.path.join(GID_DIR, "task_queue.md"))
     if text is None:
         die("task_queue.md not found")
     tasks, milestones = parse_task_queue(text)
 
     gs = load_git_state()
-    existing_wt = len(gs.get("worktrees", {}))   # worktrees currently on disk (worktree mode)
-    new_wt = 0                                    # new worktrees this batch would create
+    existing_wt = len(gs.get("worktrees", {}))   # task worktrees currently on disk
+    new_wt = 0                                    # new task worktrees this batch would create
+    source_exec = 0                               # source-touching executors already in this batch
+    parallel = git_mode == "worktree" and max_parallel > 1
 
     ms_status = {mid: milestone_status(m, tasks) for mid, m in milestones.items()}
     active_ms = None
@@ -355,10 +361,16 @@ def cmd_pool(n_max=5, git_mode="worktree", max_worktrees=8):
         if c:
             deferred.append({"task_id": t["id"], "reason": f"touches conflict with {c}"})
             continue
+        # Sequentiality cap: source-touching executors share the goal worktree (seq mode) or
+        # need a task worktree (parallel mode) — either way no more than max_parallel at once.
+        if t.get("touches") and source_exec >= max_parallel:
+            deferred.append({"task_id": t["id"], "reason": "max_parallel"})
+            continue
         pool.append({"role": "executor", "task_id": t["id"],
                      "scratch": f"{GID_DIR}/workspace/exec-{t['id']}/"})
         if t.get("touches"):
             touching.append((t["id"], set(t["touches"])))
+            source_exec += 1
     # P4 new executors
     def p4_key(t):
         return (PRIORITY_ORDER.get((t.get("priority") or "medium").lower(), 1), created(t))
@@ -371,9 +383,13 @@ def cmd_pool(n_max=5, git_mode="worktree", max_worktrees=8):
         if c:
             deferred.append({"task_id": t["id"], "reason": f"touches conflict with {c}"})
             continue
-        # Worktree hard-cap backpressure: a new (P4) source-touching executor needs a fresh
-        # worktree; defer it if we are already at max. Rework (P3) reuses an existing worktree.
-        if git_mode == "worktree" and t.get("touches") and t["id"] not in gs.get("worktrees", {}):
+        # Sequentiality cap (see P3).
+        if t.get("touches") and source_exec >= max_parallel:
+            deferred.append({"task_id": t["id"], "reason": "max_parallel"})
+            continue
+        # Worktree hard-cap backpressure — only in parallel mode (seq tasks share the goal
+        # worktree and create no task worktree).
+        if parallel and t.get("touches") and t["id"] not in gs.get("worktrees", {}):
             if existing_wt + new_wt >= max_worktrees:
                 deferred.append({"task_id": t["id"], "reason": "wt_cap"})
                 continue
@@ -382,6 +398,7 @@ def cmd_pool(n_max=5, git_mode="worktree", max_worktrees=8):
                      "scratch": f"{GID_DIR}/workspace/exec-{t['id']}/"})
         if t.get("touches"):
             touching.append((t["id"], set(t["touches"])))
+            source_exec += 1
 
     # Fallback (non-git) race guard for #6: a validator that runs build/test cannot share a
     # batch with a source-touching executor mutating the same shared tree. In worktree mode
@@ -527,6 +544,63 @@ def wt_branch(tid):
     return "gid/" + tid
 
 
+def goal_wt_path():
+    return os.path.join(WT_ROOT, GOAL_WT)
+
+
+def setup_shared_gid(wt):
+    """Make <wt>/.get-it-done a symlink to the repo-root .get-it-done (single shared copy),
+    and keep git from seeing it: sparse-exclude the tracked .get-it-done/ from the worktree
+    checkout, symlink it back, exclude the symlink from status, and assume-unchanged the
+    shadowed tracked paths. Idempotent + best-effort (never fatal). Returns the steps that ran."""
+    root_gid = os.path.abspath(GID_DIR)
+    link = os.path.join(wt, GID_DIR)
+    done = []
+    # 1. sparse-exclude the tracked .get-it-done/ dir (source stays fully checked out).
+    run_git(["-C", wt, "sparse-checkout", "init", "--no-cone"])
+    rc, _, _ = run_git(["-C", wt, "sparse-checkout", "set", "/*", "!/.get-it-done/"])
+    if rc == 0:
+        run_git(["-C", wt, "checkout"])
+        done.append("sparse")
+    # 2. symlink (junction on Windows) — only if absent.
+    if not os.path.lexists(link):
+        try:
+            if os.name == "nt":
+                subprocess.run(["cmd", "/c", "mklink", "/J", link, root_gid],
+                               capture_output=True, text=True)
+            else:
+                os.symlink(root_gid, link)
+            done.append("symlink")
+        except OSError:
+            pass
+    # 3. exclude the .get-it-done symlink AND each link_dir symlink from `git status`
+    #    (slash-less — a trailing slash matches only dirs, not the symlink file). Shared
+    #    info/exclude; dedup-guarded.
+    link_dirs = load_git_state().get("link_dirs", [])
+    rc, exc, _ = run_git(["-C", wt, "rev-parse", "--path-format=absolute",
+                          "--git-path", "info/exclude"])
+    if rc == 0 and exc:
+        try:
+            body = read(exc) or ""
+            have = set(body.splitlines())
+            want = ["/.get-it-done"] + [f"/{d}" for d in link_dirs]
+            add = [w for w in want if w not in have]
+            if add:
+                with open(exc, "a", encoding="utf-8") as f:
+                    f.write("\n".join(add) + "\n")
+            done.append("exclude")
+        except OSError:
+            pass
+    # 4. assume-unchanged the shadowed tracked .get-it-done paths (silence ' D').
+    _, tracked, _ = run_git(["-C", wt, "ls-files", "-z", "--", GID_DIR])
+    paths = [x for x in tracked.split("\0") if x]
+    for p in paths:
+        run_git(["-C", wt, "update-index", "--assume-unchanged", p])
+    if paths:
+        done.append("assume-unchanged")
+    return done
+
+
 def load_tasks():
     txt = read(os.path.join(GID_DIR, "task_queue.md"))
     if txt is None:
@@ -566,12 +640,14 @@ def goal_slug():
     return re.sub(r"[^A-Za-z0-9]+", "-", base).strip("-").lower() or "goal"
 
 
-def upstream_contains_head():
-    """True if HEAD is already on the branch's upstream — rewriting would force-push. Skip then."""
-    rc, up, _ = run_git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
+def upstream_contains_head(cwd=None):
+    """True if HEAD is already on the branch's upstream — rewriting would force-push. Skip then.
+    cwd selects which worktree's HEAD/upstream to check (the goal worktree for consolidation)."""
+    pre = ["-C", cwd] if cwd else []
+    rc, up, _ = run_git(pre + ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])
     if rc != 0 or not up:
         return False
-    rc2, _, _ = run_git(["merge-base", "--is-ancestor", "HEAD", up])
+    rc2, _, _ = run_git(pre + ["merge-base", "--is-ancestor", "HEAD", up])
     return rc2 == 0
 
 
@@ -592,27 +668,99 @@ def cmd_git_preflight():
                       "head_sha": head, "worktree_supported": supported}))
 
 
-def cmd_worktree_add(tid):
+def cmd_goal_worktree_init():
+    """Create the per-goal 'main' worktree (_goal) on gid/goal-<slug> from the user's HEAD.
+    ALL goal source changes accumulate there; the user's own branch/working tree stay clean.
+    Idempotent: reuses an existing _goal and re-asserts the shared-.get-it-done symlink."""
     gs = load_git_state()
-    path, branch = wt_path(tid), wt_branch(tid)
+    slug = goal_slug()
+    branch = "gid/goal-" + slug
+    path = goal_wt_path()
     _, head, _ = run_git(["rev-parse", "HEAD"])
     if os.path.isdir(path):
+        setup_shared_gid(path)                               # re-assert symlink/sparse after a crash
+        # Keep the worktree's ACTUAL branch — goal.md text (and the derived slug) may have
+        # drifted via /adjust soft, but the goal worktree stays on its original branch.
+        _, cur_branch, _ = run_git(["-C", path, "rev-parse", "--abbrev-ref", "HEAD"])
+        branch = cur_branch or gs.get("goal_branch") or branch
+        gs.update(goal_slug=gs.get("goal_slug") or slug, goal_branch=branch,
+                  goal_base=gs.get("goal_base") or head)
+        save_git_state(gs)
+        print(json.dumps({"ok": True, "path": path, "branch": branch, "reused": True}))
+        return
+    os.makedirs(WT_ROOT, exist_ok=True)
+    rcb, _, _ = run_git(["rev-parse", "--verify", "--quiet", branch])
+    if rcb == 0:
+        rc, _, err = run_git(["worktree", "add", "--no-checkout", path, branch])
+    else:
+        rc, _, err = run_git(["worktree", "add", "--no-checkout", "-b", branch, path, "HEAD"])
+    if rc != 0:
+        print(json.dumps({"ok": False, "reason": err}))
+        return
+    steps = setup_shared_gid(path)
+    linked = [d for d in gs.get("link_dirs", []) if link_one(d, path)]
+    gs.update(goal_slug=slug, goal_branch=branch, goal_base=head)
+    save_git_state(gs)
+    print(json.dumps({"ok": True, "path": path, "branch": branch, "base_sha": head,
+                      "shared_gid": steps, "linked": linked, "reused": False}, ensure_ascii=False))
+
+
+def cmd_goal_commit_task(tid):
+    """Sequential mode: the executor edited directly in _goal; on validator PASS commit the
+    task's source as ONE commit on gid/goal-<slug>. Records the milestone base on the first
+    task commit of a milestone."""
+    gs = load_git_state()
+    wt = goal_wt_path()
+    if not os.path.isdir(wt):
+        print(json.dumps({"ok": True, "skipped": "no_goal_worktree"}))
+        return
+    scoped_add(wt, gs.get("link_dirs", []))                  # excludes .get-it-done + link_dirs
+    _, staged, _ = run_git(["-C", wt, "diff", "--cached", "--name-only"])
+    if not staged:
+        print(json.dumps({"ok": True, "skipped": "no_changes"}))
+        return
+    tasks, _ = load_tasks()
+    title = tasks.get(tid, {}).get("title", "")
+    rc, _, err = run_git(["-C", wt, "commit", "-m", f"{tid}: {title}"])   # NO -a
+    if rc != 0:
+        print(json.dumps({"ok": False, "reason": err}))
+        return
+    _, sha, _ = run_git(["-C", wt, "rev-parse", "HEAD"])
+    M = tasks.get(tid, {}).get("milestone")
+    if M and M not in gs["milestone_bases"]:
+        _, par, _ = run_git(["-C", wt, "rev-parse", "HEAD~1"])   # parent of this milestone's first commit
+        if par:
+            gs["milestone_bases"][M] = par
+            save_git_state(gs)
+    print(json.dumps({"ok": True, "commit_sha": sha}))
+
+
+def cmd_worktree_add(tid):
+    """Parallel mode: a task worktree branched from the GOAL branch (not the user's HEAD),
+    with the shared-.get-it-done symlink. Idempotent."""
+    gs = load_git_state()
+    path, branch = wt_path(tid), wt_branch(tid)
+    base_ref = gs.get("goal_branch") or "HEAD"      # branch from the goal branch in goal mode
+    _, base_sha, _ = run_git(["rev-parse", base_ref])
+    if os.path.isdir(path):
+        setup_shared_gid(path)
         print(json.dumps({"ok": True, "path": path, "branch": branch, "reused": True}))
         return
     os.makedirs(WT_ROOT, exist_ok=True)
     rcb, _, _ = run_git(["rev-parse", "--verify", "--quiet", branch])
     if rcb == 0:                                    # branch exists (blocked-retry / crash) → recreate WT
-        rc, _, err = run_git(["worktree", "add", path, branch])
-    else:                                           # first attempt → new branch + WT at HEAD
-        rc, _, err = run_git(["worktree", "add", "-b", branch, path, "HEAD"])
+        rc, _, err = run_git(["worktree", "add", "--no-checkout", path, branch])
+    else:                                           # first attempt → new branch + WT off the goal branch
+        rc, _, err = run_git(["worktree", "add", "--no-checkout", "-b", branch, path, base_ref])
     if rc != 0:
         print(json.dumps({"ok": False, "reason": err}))
         return
+    steps = setup_shared_gid(path)
     linked = [d for d in gs.get("link_dirs", []) if link_one(d, path)]
-    gs["worktrees"][tid] = {"branch": branch, "base": head, "created": now_iso()}
+    gs["worktrees"][tid] = {"branch": branch, "base": base_sha, "created": now_iso()}
     save_git_state(gs)
-    print(json.dumps({"ok": True, "path": path, "branch": branch,
-                      "base_sha": head, "reused": False, "linked": linked}, ensure_ascii=False))
+    print(json.dumps({"ok": True, "path": path, "branch": branch, "base_sha": base_sha,
+                      "reused": False, "linked": linked, "shared_gid": steps}, ensure_ascii=False))
 
 
 def cmd_worktree_commit_wip(tid, attempt):
@@ -635,42 +783,49 @@ def cmd_worktree_commit_wip(tid, attempt):
 
 
 def cmd_worktree_merge(tid):
+    """Parallel mode: squash-merge the task branch gid/<T> INTO the goal branch (run with cwd
+    = the _goal worktree), as one commit on gid/goal-<slug>. The user's branch is untouched."""
     gs = load_git_state()
     branch, wt = wt_branch(tid), wt_path(tid)
+    goal_wt = goal_wt_path()
+    if not os.path.isdir(goal_wt):
+        print(json.dumps({"ok": False, "reason": "no_goal_worktree"}))
+        return
     rcb, _, _ = run_git(["rev-parse", "--verify", "--quiet", branch])
-    if rcb != 0 and tid not in gs.get("worktrees", {}):
+    if rcb != 0:
+        # Branch gone ⇒ the squash commit already landed on the goal branch (the commit
+        # precedes branch deletion). Idempotent no-op — never re-attempt a merge of a gone branch.
         print(json.dumps({"ok": True, "skipped": "already_merged"}))
         return
-    # Ensure any last-moment worktree changes are committed to the branch.
+    # Ensure any last-moment task-worktree changes are committed to its branch.
     if os.path.isdir(wt):
         scoped_add(wt, gs.get("link_dirs", []))
         _, staged, _ = run_git(["-C", wt, "diff", "--cached", "--name-only"])
         if staged:
             run_git(["-C", wt, "commit", "-m", f"wip({tid}): pre-merge"])
-    _, pre_head, _ = run_git(["rev-parse", "HEAD"])
-    rcm, _, _ = run_git(["merge", "--squash", branch])
+    _, pre_head, _ = run_git(["-C", goal_wt, "rev-parse", "HEAD"])
+    rcm, _, _ = run_git(["-C", goal_wt, "merge", "--squash", branch])
     if rcm != 0:
-        _, confl, _ = run_git(["diff", "--name-only", "--diff-filter=U"])
-        run_git(["reset", "--merge"])              # --abort does NOT work after a --squash conflict
+        _, confl, _ = run_git(["-C", goal_wt, "diff", "--name-only", "--diff-filter=U"])
+        run_git(["-C", goal_wt, "reset", "--merge"])   # --abort does NOT work after a --squash conflict
         print(json.dumps({"ok": False, "reason": "conflict",
                           "files": [f for f in confl.splitlines() if f]}, ensure_ascii=False))
         return
-    tasks, milestones = load_tasks()
+    tasks, _ = load_tasks()
     title = tasks.get(tid, {}).get("title", "")
-    _, staged, _ = run_git(["diff", "--cached", "--name-only"])
+    scoped_add(goal_wt, gs.get("link_dirs", []))      # keep .get-it-done out of the squash commit
+    _, staged, _ = run_git(["-C", goal_wt, "diff", "--cached", "--name-only"])
     if staged:
-        rc, _, err = run_git(["commit", "-m", f"{tid}: {title}"])   # NO -a → excludes .get-it-done churn
+        rc, _, err = run_git(["-C", goal_wt, "commit", "-m", f"{tid}: {title}"])   # NO -a
         if rc != 0:
             print(json.dumps({"ok": False, "reason": err}))
             return
-        _, commit_sha, _ = run_git(["rev-parse", "HEAD"])
+        _, commit_sha, _ = run_git(["-C", goal_wt, "rev-parse", "HEAD"])
     else:
         commit_sha = pre_head                        # empty diff (no-op merge)
     M = tasks.get(tid, {}).get("milestone")
     if M and M not in gs["milestone_bases"]:
-        gs["milestone_bases"][M] = pre_head
-    if not gs.get("goal_base"):
-        gs["goal_base"] = pre_head
+        gs["milestone_bases"][M] = pre_head          # goal_base stays the user's HEAD (set at init)
     if os.path.isdir(wt):
         run_git(["worktree", "remove", "--force", wt])
     run_git(["worktree", "prune"])
@@ -708,6 +863,9 @@ def cmd_worktree_gc():
             p = os.path.join(WT_ROOT, name)
             if not os.path.isdir(p):
                 continue
+            if name == GOAL_WT:                  # the goal "main" worktree is never task-reaped
+                kept.append(name)
+                continue
             if name in live:
                 kept.append(name)
                 continue
@@ -730,7 +888,10 @@ def cmd_worktree_reset_all():
             if os.path.abspath(p).startswith(wt_abs):
                 run_git(["worktree", "remove", "--force", p])
     run_git(["worktree", "prune"])
-    _, branches, _ = run_git(["for-each-ref", "--format=%(refname:short)", "refs/heads/gid/"])
+    # Only the plugin's own branches — gid/goal-* (the goal worktree) and gid/T-* (task
+    # worktrees). Do NOT blanket-delete refs/heads/gid/* (a user may park their own gid/<x>).
+    _, branches, _ = run_git(["for-each-ref", "--format=%(refname:short)",
+                              "refs/heads/gid/goal-*", "refs/heads/gid/T-*"])
     for b in branches.splitlines():
         if b.strip():
             run_git(["branch", "-D", b.strip()])
@@ -738,6 +899,7 @@ def cmd_worktree_reset_all():
         shutil.rmtree(WT_ROOT, ignore_errors=True)
     gs = load_git_state()
     gs["worktrees"], gs["milestone_bases"], gs["goal_base"] = {}, {}, None
+    gs["goal_slug"], gs["goal_branch"] = None, None
     save_git_state(gs)
     print(json.dumps({"ok": True}))
 
@@ -778,26 +940,35 @@ def cmd_check_stray_edits(tid, revert):
 
 
 def _consolidate(base, msg_subject, msg_body, label):
+    """Collapse base..HEAD on the goal branch into one commit (run via the _goal worktree).
+    No backup ref is kept — the intermediate per-task commits drop to reflog only (issue 5)."""
+    goal_wt = goal_wt_path()
+    if not os.path.isdir(goal_wt):
+        # NEVER fall back to the repo root — base is an ancestor of the user's HEAD, so a
+        # reset --soft there would rewrite the USER's own commits. Refuse instead.
+        print(json.dumps({"ok": True, "skipped": "no_goal_worktree"}))
+        return
+    cwd = goal_wt
+    pre = ["-C", cwd]
     if not base:
         print(json.dumps({"ok": True, "skipped": "no_base"}))
         return
-    if upstream_contains_head():
+    if upstream_contains_head(cwd):
         print(json.dumps({"ok": True, "skipped": "upstream"}))
         return
-    _, cnt, _ = run_git(["rev-list", "--count", f"{base}..HEAD"])
+    _, cnt, _ = run_git(pre + ["rev-list", "--count", f"{base}..HEAD"])
     if int(cnt or "0") <= 1:
         print(json.dumps({"ok": True, "skipped": "already_consolidated"}))
         return
-    run_git(["branch", "-f", f"gid/pre-consolidate-{goal_slug()}", "HEAD"])
-    rc, _, err = run_git(["reset", "--soft", base])
+    rc, _, err = run_git(pre + ["reset", "--soft", base])
     if rc != 0:
         print(json.dumps({"ok": False, "reason": err}))
         return
-    rc2, _, err2 = run_git(["commit", "-m", msg_subject, "-m", msg_body])
+    rc2, _, err2 = run_git(pre + ["commit", "-m", msg_subject, "-m", msg_body])
     if rc2 != 0:
         print(json.dumps({"ok": False, "reason": err2}))
         return
-    _, sha, _ = run_git(["rev-parse", "HEAD"])
+    _, sha, _ = run_git(pre + ["rev-parse", "HEAD"])
     print(json.dumps({"ok": True, "commit_sha": sha, "label": label}, ensure_ascii=False))
 
 
@@ -841,16 +1012,20 @@ def _positional():
 
 def main():
     if len(sys.argv) < 2:
-        die("usage: gid.py <state|dag-check|pool|rqs|batch-id|truncate-logs|"
-            "git-preflight|worktree-add|worktree-commit-wip|worktree-merge|worktree-drop|"
-            "worktree-gc|worktree-reset-all|check-stray-edits|consolidate-milestone|consolidate-final>")
+        die("usage: gid.py <state|dag-check|pool|rqs|batch-id|truncate-logs|git-preflight|"
+            "goal-worktree-init|goal-commit-task|worktree-add|worktree-commit-wip|worktree-merge|"
+            "worktree-drop|worktree-gc|worktree-reset-all|check-stray-edits|"
+            "consolidate-milestone|consolidate-final>")
     cmd = sys.argv[1]
     tid = _positional()
 
     if cmd == "pool":
         cmd_pool(git_mode=_flag("--git-mode", "worktree"),
-                 max_worktrees=int(_flag("--max-worktrees", "8")))
+                 max_worktrees=int(_flag("--max-worktrees", "8")),
+                 max_parallel=int(_flag("--max-parallel", "1")))
         return
+    if cmd == "goal-commit-task":
+        cmd_goal_commit_task(tid); return
     if cmd == "worktree-add":
         cmd_worktree_add(tid); return
     if cmd == "worktree-commit-wip":
@@ -871,6 +1046,7 @@ def main():
         "batch-id": cmd_batch_id,
         "truncate-logs": cmd_truncate_logs,
         "git-preflight": cmd_git_preflight,
+        "goal-worktree-init": cmd_goal_worktree_init,
         "worktree-gc": cmd_worktree_gc,
         "worktree-reset-all": cmd_worktree_reset_all,
         "consolidate-final": cmd_consolidate_final,

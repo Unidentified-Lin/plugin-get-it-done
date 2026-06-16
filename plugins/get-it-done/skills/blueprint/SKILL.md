@@ -82,9 +82,9 @@ FOR iteration k = 1..3:
    to the user.
 ```
 
-**Spawn protocol** (see `platform-adapter.md` Section 4):
+**Spawn protocol** (see `platform-adapter.md` Section 4 — sub-agents MUST run as isolated subagents, not inline):
 - **Claude Code**: `Agent` tool with `subagent_type: "get-it-done:scope-scanner"` / `"get-it-done:scope-verifier"` / `"get-it-done:plan-reviewer"`
-- **GitHub Copilot**: `task` tool with `agent_type:` set to the same names
+- **GitHub Copilot**: delegate to the discoverable custom agent by name (`get-it-done-scope-scanner`, etc.) and instruct it to run in its own context and return only its result — don't let Copilot run the analysis inline.
 
 ## Plan Freeze & Handoff — to /continue
 

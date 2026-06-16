@@ -64,10 +64,12 @@ $HOME\.copilot\data\get-it-done\team_learnings\
 
 ---
 
-## 4. Spawn Sub-Agents
+## 4. Spawn Sub-Agents — must run as **isolated background subagents**, not inline
+
+The dispatcher relay depends on each sub-agent running in its **own context** and returning only its `---agent-return---` block to the foreground agent, which then decides the next step. A sub-agent that runs **inline** in the dispatcher's context (sharing its window, serializing, polluting state) breaks flow control. Get this right per platform.
 
 ### Claude Code
-Use the `Agent` tool:
+Use the `Agent` tool — it always spawns an isolated sub-agent:
 ```
 Agent(
   subagent_type: "get-it-done:<agent-name>",
@@ -75,15 +77,38 @@ Agent(
   description: "<short description>"
 )
 ```
+Multiple `Agent` calls in ONE assistant message run in parallel and return together.
 
-### GitHub Copilot
-Use the `task` tool:
+### GitHub Copilot CLI
+Copilot CLI delegates to a **custom subagent** (its own context; result returns to the parent) — but ONLY when the agent is **discoverable as a Copilot custom agent** AND you **delegate to it by name**. If either is missing, Copilot runs the work **inline** (the bug to avoid).
+
+**(a) Make the agents discoverable (one-time, at bootstrap).** Copilot custom agents live in `~/.copilot/agents/` (user) or `.github/agents/` (project) as `*.agent.md`. The plugin ships its agents under `<plugin-root>/agents/`; mirror them into a Copilot agents dir with the `.agent.md` suffix:
+```bash
+# macOS / Linux — run once per machine (idempotent)
+mkdir -p "$HOME/.copilot/agents"
+for f in "<plugin-root>"/agents/*.md; do
+  base="$(basename "$f" .md)"; base="${base%.agent}"
+  ln -sf "$f" "$HOME/.copilot/agents/get-it-done-$base.agent.md"
+done
 ```
-task(
-  agent_type: "get-it-done:<agent-name>",
-  prompt: "<full prompt with absolute paths>"
-)
+```powershell
+# Windows
+New-Item -ItemType Directory -Force "$HOME\.copilot\agents" | Out-Null
+Get-ChildItem "<plugin-root>\agents\*.md" | ForEach-Object {
+  $b = $_.BaseName -replace '\.agent$',''
+  Copy-Item $_.FullName "$HOME\.copilot\agents\get-it-done-$b.agent.md" -Force
+}
 ```
+Verify with `/agent` (the get-it-done agents should be listed).
+
+**(b) Delegate by name (every spawn).** Copilot's delegation is model-driven — request it explicitly so a subagent is spawned rather than the work being done inline. In the spawn message, name the custom agent and instruct delegation, e.g.:
+> "Delegate this to the `get-it-done-executor` subagent (it runs in its own context). Pass it the inputs below and return only its final `---agent-return---` block. \<full prompt with absolute paths\>"
+
+The subagent runs isolated; its final response (the `---agent-return---` block) returns to you (the dispatcher) for flow control.
+
+**(c) Parallelism caveat.** Claude Code fans out N `Agent` calls in one message; Copilot's per-spawn delegation may not background N simultaneously. If your Copilot version does not run delegations concurrently, process the batch with fewer concurrent delegations (down to one-at-a-time) — correctness and flow control are unaffected, only wall-clock. `/fleet` is Copilot's explicit parallel-subagent mode if available.
+
+> **Verify against your Copilot CLI version**: the exact delegation phrasing/tooling evolves. The invariant to preserve: each get-it-done agent runs as an **isolated subagent** and returns its `---agent-return---` to the foreground dispatcher. If you see a sub-agent's work appearing inline in the dispatcher's own output, delegation is not happening — re-check (a) discoverability and (b) explicit by-name delegation.
 
 Always pass all reference file **absolute paths** in the agent prompt — agents start with a fresh context and cannot resolve relative paths.
 
@@ -210,9 +235,9 @@ There is no Skill tool. Read the target skill's `SKILL.md` from the plugin root 
 
 ## 9.5. Git worktree operations (autonomous EXECUTING)
 
-In git projects the dispatcher isolates each source-touching task in its own `git worktree` under `.get-it-done/worktrees/<task_id>/` (gitignored). **All git work is done by `gid.py`** (`worktree-add/-commit-wip/-merge/-drop/-gc/-reset-all`, `consolidate-milestone/-final`, `check-stray-edits`) — so the only cross-platform difference is the Python invocation (`python3`, fall back to `python` on Windows), identical to Step 0.5.
+In git projects the dispatcher creates ONE per-goal "main" worktree `_goal` at `.get-it-done/worktrees/_goal/` on branch `gid/goal-<slug>` (gitignored); all goal source changes accumulate there, the user's branch stays clean. Source tasks run sequentially in `_goal` by default (`max_parallel=1`), or in per-task worktrees branched from the goal branch when `max_parallel>1`. **All git work is done by `gid.py`** (`goal-worktree-init`, `goal-commit-task`, `worktree-add/-commit-wip/-merge/-drop/-gc/-reset-all`, `consolidate-milestone/-final`, `check-stray-edits`) — so the only cross-platform difference is the Python invocation (`python3`, fall back to `python` on Windows), identical to Step 0.5.
 
-Dependency dirs (`node_modules`, …) are linked into each worktree so build/test run without reinstalling:
+Every worktree's `.get-it-done/` is a **symlink** to the single repo-root `.get-it-done/` (`gid.py` sparse-excludes the tracked copy and symlinks it back). Dependency dirs (`node_modules`, …) are likewise linked so build/test run without reinstalling:
 - **macOS / Linux**: `os.symlink` (symbolic link).
 - **Windows**: directory junction `mklink /J` — works on local NTFS **without admin or Developer Mode** (only symbolic links `/D` need elevation). `gid.py` picks the right one automatically.
 
@@ -224,7 +249,7 @@ Non-git projects (or when `git-preflight` reports git unusable) fall back to dir
 |-----------|------------|----------------------|-------------------|
 | Plugin root | `${CLAUDE_PLUGIN_ROOT}` | `ls -td $(find $HOME/.copilot -name get-it-done) \| head -1` | `Get-ChildItem ... \| Sort LastWriteTime -Desc` |
 | Data dir | `${CLAUDE_PLUGIN_DATA}/team_learnings/` | `~/.copilot/data/get-it-done/team_learnings/` | `$HOME\.copilot\data\get-it-done\team_learnings\` |
-| Spawn agent | `Agent` tool | `task` tool | `task` tool |
+| Spawn agent (isolated subagent) | `Agent` tool | delegate to `get-it-done-<role>` custom agent by name (§4) | delegate to `get-it-done-<role>` custom agent by name (§4) |
 | Ask user (main conversation only) | `AskUserQuestion` | `ask_user` | `ask_user` |
 | Invoke skill | `Skill` tool | read SKILL.md, run inline | read SKILL.md, run inline |
 | Open in browser | `open "file://..."` | `open "file://..."` | `Start-Process chrome ...` |

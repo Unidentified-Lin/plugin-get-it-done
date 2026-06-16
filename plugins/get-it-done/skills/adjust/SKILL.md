@@ -187,7 +187,9 @@ OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTI
    rm -f .get-it-done/prd.md
    rm -f .get-it-done/plan_audit.md
 
-   # hard reset also wipes worktrees + gid/* branches (soft does NOT — it preserves in-flight work)
+   # hard reset also wipes the _goal main worktree + task worktrees + gid/* branches; the next
+   # /continue Step 0.6 re-creates _goal from the (possibly new) HEAD. (soft does NOT reset —
+   # it preserves the goal worktree and in-flight work.)
    python3 "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py" worktree-reset-all 2>/dev/null || true
    ```
 

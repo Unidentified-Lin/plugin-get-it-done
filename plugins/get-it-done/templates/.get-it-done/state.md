@@ -99,13 +99,17 @@ A crash is `status == RUNNING` AND `batch_ended_at == null`. On entry the dispat
 
 Old (pre-v2) state.md files without `schema_version` or `batch_id` are unmigrated. If `/continue` reads a v1 file, it emits an error pointing the user at `/objective` to reset and exits.
 
-## Git isolation (v2.1 — worktree mode)
+## Git isolation (v2.2 — goal-worktree mode)
 
-When the project is a git repo, **source-touching** tasks (those with a non-empty `Touches`) run in their own `git worktree` under `.get-it-done/worktrees/<task_id>/`, on a throwaway branch `gid/<task_id>`. The executor and its validator both operate inside that worktree; the shared main tree is never mutated during sub-agent execution. The dispatcher squash-merges each passing task into main as **one commit per task** (attempt noise stays on the branch), then collapses each validated milestone into **one commit per milestone** (`commit_granularity` config). Non-git projects fall back to direct main-tree edits.
+When the project is a git repo, the dispatcher creates ONE **goal worktree** `_goal` at `.get-it-done/worktrees/_goal/` on branch `gid/goal-<slug>` (from the user's HEAD) at goal start. **ALL the goal's source changes accumulate there** — the user's own branch and working tree stay clean, so a different goal/session can run the same repo concurrently. Every worktree's `.get-it-done/` is a **symlink to the single repo-root `.get-it-done/`**.
 
-Git bookkeeping lives in **`.get-it-done/git_state.json`** — owned exclusively by `gid.py` (never hand-edited): `git_mode`, `commit_granularity`, `max_worktrees`, `link_dirs`, `goal_base`, `milestone_bases`, and the live `worktrees` map. `git_state.json`, `worktrees/`, `workspace/`, and `archive/` are git-ignored via `.get-it-done/.gitignore`.
+- **Sequential (`max_parallel=1`, default)**: every source task runs directly in `_goal`; on validator PASS the dispatcher commits it as one commit on `gid/goal-<slug>`. Executor + validator share `_goal`.
+- **Parallel (`max_parallel>1`)**: when ≥2 source executors run at once, each gets a per-task worktree branched from `gid/goal-<slug>`, squash-merged back into it on pass.
+- Each validated milestone consolidates to **one commit on the goal branch** (`git reset --soft <milestone_base>`; no backup ref). At completion `gid/goal-<slug>` is left for the user to review/merge/PR — the dispatcher never auto-merges into the user's branch. Non-git projects fall back to direct edits.
 
-**Load-bearing invariant**: per-task→per-milestone commit consolidation (`git reset --soft <milestone_base>`) is exact **only because milestone gating keeps each milestone's task commits contiguous on main** — a task in `M_k` never starts until `M_1..M_{k-1}` are validated. If that gate ever changes, the consolidation math breaks.
+Git bookkeeping lives in **`.get-it-done/git_state.json`** — owned exclusively by `gid.py` (never hand-edited): `git_mode`, `commit_granularity`, `max_worktrees`, `max_parallel`, `link_dirs`, `goal_slug`, `goal_branch`, `goal_base`, `milestone_bases`, and the live `worktrees` map. `git_state.json`, `worktrees/`, `workspace/`, and `archive/` are git-ignored via `.get-it-done/.gitignore`.
+
+**Load-bearing invariant**: per-milestone commit consolidation (`git reset --soft <milestone_base>`) is exact **only because milestone gating keeps each milestone's commits contiguous on the goal branch** — a task in `M_k` never starts until `M_1..M_{k-1}` are validated. If that gate ever changes, the consolidation math breaks.
 
 ## Agent-return YAML contract
 
