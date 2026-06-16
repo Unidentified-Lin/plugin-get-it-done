@@ -37,7 +37,10 @@ DEFAULT_GIT_STATE = {
     "git_mode": "auto",
     "commit_granularity": "milestone",
     "max_worktrees": 8,
-    "max_parallel": 1,            # sequential by default — tasks run in the _goal worktree
+    "max_parallel": 5,            # parallel by default — CEILING on concurrent source executors.
+                                  # Actual parallelism is driven by the DAG (independent tasks with
+                                  # non-overlapping Touches) + the batch cap (5) + max_worktrees.
+                                  # Set 1 for fully sequential.
     "link_dirs": ["node_modules"],
     "goal_slug": None,            # slug derived from goal.md
     "goal_branch": None,          # "gid/goal-<slug>" — where ALL goal source changes accumulate
@@ -314,7 +317,7 @@ def milestone_status(m, tasks):
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
-def cmd_pool(n_max=5, git_mode="worktree", max_worktrees=8, max_parallel=1):
+def cmd_pool(n_max=5, git_mode="worktree", max_worktrees=8, max_parallel=5):
     text = read(os.path.join(GID_DIR, "task_queue.md"))
     if text is None:
         die("task_queue.md not found")
@@ -1022,7 +1025,7 @@ def main():
     if cmd == "pool":
         cmd_pool(git_mode=_flag("--git-mode", "worktree"),
                  max_worktrees=int(_flag("--max-worktrees", "8")),
-                 max_parallel=int(_flag("--max-parallel", "1")))
+                 max_parallel=int(_flag("--max-parallel", "5")))
         return
     if cmd == "goal-commit-task":
         cmd_goal_commit_task(tid); return

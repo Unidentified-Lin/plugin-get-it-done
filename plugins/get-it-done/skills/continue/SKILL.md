@@ -60,14 +60,15 @@ IF preflight.is_git AND preflight.worktree_supported:
 ELSE:
     git_mode := fallback
     append once-per-goal "<ISO> [GIT_FALLBACK] non-git/unusable; source executors write the main tree directly (no rollback)" to progress_log.md
-max_parallel := git_state.json `max_parallel` (default 1)
+max_parallel := git_state.json `max_parallel` (default 5 — parallel by default)
 python3 "$GID" worktree-gc      # reaper: prune git metadata + remove any TASK worktree not tied to a live task. NEVER reaps _goal. Idempotent.
 ```
 
-`git_mode` + `max_parallel` drive Step 5/6/7/9:
-- **`git_mode=worktree` + `max_parallel=1` (default)** ⇒ every source task runs **sequentially in the `_goal` worktree** — no per-task worktree, no per-task merge. Executor and validator for a task share `_goal`.
-- **`max_parallel>1`** ⇒ when a batch would run ≥2 source executors at once, each gets a **task worktree** branched from `gid/goal-<slug>`, squash-merged back into `gid/goal-<slug>` on validator pass.
-- In `worktree` mode, #6 (validator↔executor build race) is structurally impossible — each runs in its own worktree (or `_goal` sequentially). In `fallback` mode, Step 5's pool applies a scheduling guard instead.
+`git_mode` + `max_parallel` drive Step 5/6/7/9. **Parallelism is driven by the plan, not a manual knob** — `max_parallel` is only a CEILING (default 5 = the batch cap); the pool naturally parallelizes whatever the DAG allows:
+- **Independent tasks** (deps satisfied, same active milestone, **non-overlapping `Touches`**) run **concurrently** — up to `min(max_parallel, max_worktrees, batch cap 5)`. Each gets its own **task worktree** branched from `gid/goal-<slug>`, squash-merged back on validator pass.
+- **Dependent / same-file tasks** automatically **serialize** — deps gate them, and `Touches` collision detection keeps overlapping-source tasks out of the same batch.
+- When only **one** source task is eligible this tick, it runs directly in `_goal` (no task worktree — cheaper). Executor and its validator always share that one task's worktree.
+- Set `max_parallel: 1` in `git_state.json` for fully sequential. In `worktree` mode, #6 (validator↔executor build race) is structurally impossible — each runs in its own worktree (or `_goal`). In `fallback` mode, Step 5's pool applies a scheduling guard instead.
 
 ## Step 1: Schema version check
 

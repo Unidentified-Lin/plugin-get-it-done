@@ -116,10 +116,12 @@ EXECUTING: dispatcher batch per tick
 Git isolation (git projects, goal-worktree model): at goal start the dispatcher
 creates ONE _goal worktree on branch gid/goal-<slug> (from the user's HEAD); ALL
 goal source accumulates there, so the user's own branch/working tree stay clean
-and concurrent goals can share a repo. Sequential by default (max_parallel=1):
-each task runs in _goal, executor + its validator share it; validator PASS commits
-one commit on the goal branch. max_parallel>1: parallel source tasks get per-task
-worktrees branched from the goal branch, merged back on pass. Each validated
+and concurrent goals can share a repo. Parallel by default, plan-driven: independent
+tasks (deps satisfied, non-overlapping Touches) run concurrently, each in a per-task
+worktree branched from the goal branch, merged back on validator pass — up to
+max_parallel (default 5) / max_worktrees. Dependent or same-file tasks serialize
+automatically; a lone eligible task runs in _goal. Executor + its validator share a
+task's worktree; validator PASS commits one commit on the goal branch. Each validated
 milestone consolidates to ONE commit on the goal branch (no intermediate commits
 kept). Every worktree shares one symlinked .get-it-done/. At completion the goal
 branch is left for the user to review/merge (never auto-merged). Non-git projects
