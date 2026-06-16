@@ -94,14 +94,15 @@ After the user confirms the task list:
    - PASS → continue below.
    - RETURN TO TASK DETAILING / IMPLEMENTATION DIRECTION / REQUIREMENTS CONFIRMATION → go back to that stage, fix, re-confirm with the user, re-run plan-reviewer.
 2. Mark the planning document status as `已凍結，進入執行`.
-3. **Initialize get-it-done execution state** (follow the Plan Freeze & Handoff section of `task-breakdown-guide.md` exactly):
-   - Bootstrap `.get-it-done/` if not already present (platform-adapter.md Section 7)
-   - Write `.get-it-done/goal.md` with the feature description
-   - Write `.get-it-done/task_queue.md` in v2 DAG format **including the `## Milestones` section**
-   - Write `.get-it-done/metrics.md` (validators read acceptance criteria from here by stable ID — single source of truth for criteria)
-   - Write `.get-it-done/state.md` YAML block with `phase: EXECUTING`
-   - Append `[/PLAN_COMPLETE]` to `.get-it-done/progress_log.md`
-4. Tell the user: "規劃完成，執行 `/continue` 開始自主執行"
+3. **Establish the goal worktree (GID_BASE)** — like `/objective` Step 0a: derive a slug, `GID := ${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py`, `python3 "$GID" git-preflight`; if git+worktree-capable, `python3 "$GID" goal-worktree-init --slug "<slug>"` → `export GID_BASE = result.path` (else GID_BASE unset = repo-root back-compat). All `.get-it-done/...` below are under `"$GID_BASE/"`.
+4. **Initialize get-it-done execution state** under `$GID_BASE` (follow the Plan Freeze & Handoff section of `task-breakdown-guide.md` exactly):
+   - Bootstrap `"$GID_BASE/.get-it-done/"` from templates (`rsync --ignore-existing`; preserves the `git_state.json` that `goal-worktree-init` wrote)
+   - Write `"$GID_BASE/.get-it-done/goal.md"` with the feature description
+   - Write `"$GID_BASE/.get-it-done/task_queue.md"` in v2 DAG format **including the `## Milestones` section**
+   - Write `"$GID_BASE/.get-it-done/metrics.md"` (validators read acceptance criteria from here by stable ID — single source of truth)
+   - Write `"$GID_BASE/.get-it-done/state.md"` YAML block with `phase: EXECUTING`
+   - Append `[/PLAN_COMPLETE]` to `"$GID_BASE/.get-it-done/progress_log.md"`
+5. Tell the user: "規劃完成（工作 worktree：`$GID_BASE`，獨立於其他目標）。執行 `/continue` 開始自主執行。"
 
 ## Key Rules
 

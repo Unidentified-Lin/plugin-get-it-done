@@ -19,6 +19,23 @@ The plugin install dir (`${CLAUDE_PLUGIN_ROOT}`) is read-only — templates only
 
 Extract the goal from the user's message — everything after `/objective`. If empty, ask for one and stop.
 
+## Step 0a: Create the goal worktree (multi-goal — establishes GID_BASE)
+
+Each goal runs in its **own git worktree** under `<repo>.gid-goals/<slug>/` so multiple goals can run concurrently from one repo-root window without colliding, and your own checkout stays clean.
+
+```
+GID := "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py"
+preflight := python3 "$GID" git-preflight              # at repo root
+slug := a short lowercase-hyphenated slug from the goal text (e.g. "add-login-flow"; keep <40 chars, unique)
+IF preflight.is_git AND preflight.worktree_supported:
+    result := python3 "$GID" goal-worktree-init --slug "<slug>"   # creates <repo>.gid-goals/<slug> on gid/goal-<slug> from HEAD
+    export GID_BASE = result.path                       # absolute path to the goal worktree
+ELSE:
+    GID_BASE unset → single-goal back-compat at the repo root (non-git or no worktree support)
+```
+
+**GID_BASE = the active goal's worktree** (unset ⇒ repo root). For the rest of this skill: every `.get-it-done/...` path is under `"$GID_BASE/.get-it-done/..."`, and every `python3 "$GID" <cmd>` (except `git-preflight`/`goals`/`goal-worktree-init`) takes `--base "$GID_BASE"`. Tell the user, at the end, that this goal lives in worktree `$GID_BASE` and runs independently of other goals/windows.
+
 ## Step 0: Bootstrap
 
 **When to use `/blueprint` first**: If the requirement is complex or ambiguous (needs interactive scope analysis, design decisions, impact assessment), consider running `/blueprint` first. `/blueprint` produces a frozen planning document and initializes `.get-it-done/` state automatically — you can then run `/continue` directly instead of `/objective`.
@@ -32,10 +49,11 @@ Extract the goal from the user's message — everything after `/objective`. If e
 mkdir -p "${CLAUDE_PLUGIN_DATA}/team_learnings/agent_rules"
 rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team_learnings/" "${CLAUDE_PLUGIN_DATA}/team_learnings/"
 
-# B — per-project state + sub-agent scratch surfaces
-mkdir -p .get-it-done/context .get-it-done/findings .get-it-done/workspace
-rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" .get-it-done/
+# B — per-goal state + sub-agent scratch surfaces (under $GID_BASE; = repo root when GID_BASE unset)
+mkdir -p "${GID_BASE:-.}"/.get-it-done/context "${GID_BASE:-.}"/.get-it-done/findings "${GID_BASE:-.}"/.get-it-done/workspace
+rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" "${GID_BASE:-.}/.get-it-done/"
 ```
+(`goal-worktree-init` already created `$GID_BASE/.get-it-done/git_state.json`; `--ignore-existing` preserves it.)
 
 **Windows (GitHub Copilot — PowerShell):**
 ```powershell
@@ -57,15 +75,17 @@ $global:LASTEXITCODE = 0   # robocopy returns 1-7 on SUCCESS — normalize so th
 
 `.get-it-done/workspace/` (per-executor scratch) and `.get-it-done/findings/` (per-analyst findings) are sub-agent write surfaces — bootstrap only creates the directory; sub-agents fill files.
 
-## Step 1: Check for an active goal
+## Step 1: Check for an active goal (in THIS goal's worktree)
 
-Read `.get-it-done/state.md`. If `goal_set: true` and `phase` is not `IDLE` or `COMPLETE`, ask:
+**Multi-goal note:** distinct goals coexist in separate worktrees — a new goal with a new slug never conflicts with other active goals. This check only matters when the slug you derived already exists (re-running `/objective` for the same goal).
 
-> "已有一個進行中的目標。要取代它（從頭開始）還是保留它（取消此命令）？"
+Read `"$GID_BASE/.get-it-done/state.md"`. If `goal_set: true` and `phase` is not `IDLE` or `COMPLETE`, ask:
+
+> "此 worktree 已有一個進行中的目標。要取代它（從頭開始）還是保留它（取消此命令）？（其他目標不受影響）"
 
 選擇「保留」則停止。選擇「取代」則繼續。
 
-If the file is pre-v2 (no `schema_version` or `schema_version < 2`), treat the project as replacing — overwriting the YAML block to v2 is the intended migration path.
+If the file is pre-v2 (no `schema_version` or `schema_version < 2`), treat as replacing — overwriting the YAML block to v2 is the intended migration path. (A brand-new goal worktree has fresh template state, so this is a no-op for it.)
 
 ## Step 2: Reset team state (v2 schema)
 
@@ -116,29 +136,30 @@ Human (via /objective)
 Overwrite per-goal scaffold files with explicit `cp -f` commands (ensures no stale v1-style files interfere):
 
 ```bash
+B="${GID_BASE:-.}"        # the goal worktree (or repo root in back-compat)
 # (1) Overwrite per-goal scaffolds from templates
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/task_queue.md" .get-it-done/task_queue.md
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/metrics.md" .get-it-done/metrics.md
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/research_requests.md" .get-it-done/research_requests.md
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/findings/_meta.md" .get-it-done/findings/_meta.md
+cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/task_queue.md" "$B/.get-it-done/task_queue.md"
+cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/metrics.md" "$B/.get-it-done/metrics.md"
+cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/research_requests.md" "$B/.get-it-done/research_requests.md"
+cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/findings/_meta.md" "$B/.get-it-done/findings/_meta.md"
 
 # (2) Clear leftover per-request findings files from prior goal
-find .get-it-done/findings -type f -name 'RQ-*.md' -delete
+find "$B/.get-it-done/findings" -type f -name 'RQ-*.md' -delete
 
 # (3) Clear executor scratch workspace (remove stale prior-goal artifacts)
-rm -rf .get-it-done/workspace
-mkdir -p .get-it-done/workspace
+rm -rf "$B/.get-it-done/workspace"; mkdir -p "$B/.get-it-done/workspace"
 
-# (4) Remove stale .get-it-done/prd.md (planner writes fresh when needed)
-rm -f .get-it-done/prd.md
+# (4) Remove stale prd.md / plan-audit.md (rewritten fresh when needed)
+rm -f "$B/.get-it-done/prd.md" "$B/.get-it-done/plan_audit.md"
 
-# (5) Remove stale plan-audit file from prior goal (dispatcher rewrites when its audit gate fails)
-rm -f .get-it-done/plan_audit.md
-
-# (6) Wipe the prior goal's worktrees (the _goal main worktree + any task worktrees) and all
-#     gid/* branches (no-op in non-git projects). The new goal's _goal worktree is created fresh
-#     by the dispatcher at /continue Step 0.6 (single creation site, derives the slug from goal.md).
-python3 "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py" worktree-reset-all 2>/dev/null || true
+# (5) GOAL-SCOPED reset of this goal's task worktrees + gid/T-* branches (multi-goal: NEVER
+#     wipes other goals). For a brand-new goal this is a no-op; for replace-goal it clears stale
+#     task worktrees. Back-compat (GID_BASE unset) falls back to worktree-reset-all.
+if [ -n "$GID_BASE" ]; then
+  python3 "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py" goal-reset --base "$GID_BASE" 2>/dev/null || true
+else
+  python3 "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py" worktree-reset-all 2>/dev/null || true
+fi
 ```
 
 **Do NOT overwrite** (these accumulate across goals and are preserved):
@@ -155,7 +176,7 @@ Append to `.get-it-done/progress_log.md`:
 
 ## Step 5: Launch the dispatcher
 
-Invoke the `continue` skill to start the first cycle (see `platform-adapter.md` Section 9 for cross-platform skill invocation):
+`GID_BASE` is already exported for this window (Step 0a), so `/continue` inherits the active goal — it will resolve to the same worktree. Invoke the `continue` skill to start the first cycle (see `platform-adapter.md` Section 9 for cross-platform skill invocation):
 - **Claude Code**: Skill tool with `skill: "continue"` (or `skill: "get-it-done:continue"` if a name collision requires it).
 - **GitHub Copilot** (no Skill tool): read `{plugin-root}/skills/continue/SKILL.md` and execute its instructions inline, in this same session.
 
@@ -167,6 +188,7 @@ After the first cycle completes, output (in 繁體中文 per project convention)
 目標已設定，agent 團隊已啟動。
 
 目標：<one-line summary>
+工作 worktree：<$GID_BASE>（分支 gid/goal-<slug>；獨立於其他目標/視窗，你的 checkout 保持乾淨）
 當前階段：<phase from state.md>
 最後一個 batch：<batch_id from last ## Batch block, or "(尚無)">
 下一步行動：<intent line from latest ## Batch block, or "spawn planner">

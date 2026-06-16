@@ -31,7 +31,11 @@ from datetime import datetime, timezone
 GID_DIR = ".get-it-done"
 GIT_STATE_PATH = os.path.join(GID_DIR, "git_state.json")
 WT_ROOT = os.path.join(GID_DIR, "worktrees")
-GOAL_WT = "_goal"                                              # the per-goal "main" worktree dir name
+GOAL_WT = "_goal"                                              # back-compat per-goal "main" worktree dir name
+# True when --base/GID_BASE pointed us into a goal worktree (multi-goal mode): the goal worktree
+# IS cwd, and task worktrees are grouped SIBLINGS of it. False = back-compat single-goal mode:
+# the goal worktree is .get-it-done/worktrees/_goal and task worktrees nest under it.
+GOAL_IS_CWD = False
 EXECUTING_TYPES = {"code", "webapp", "test", "api", "infra"}   # build/test-running task types
 DEFAULT_GIT_STATE = {
     "git_mode": "auto",
@@ -540,15 +544,26 @@ def save_git_state(state):
 
 
 def wt_path(tid):
+    # Multi-goal: task worktree is a grouped sibling of the goal worktree (cwd):
+    #   <gid_goals_root>/<slug>-<tid>. Back-compat: nested under .get-it-done/worktrees/.
+    if GOAL_IS_CWD:
+        cwd = os.path.abspath(".")
+        return os.path.join(os.path.dirname(cwd), os.path.basename(cwd) + "-" + tid)
     return os.path.join(WT_ROOT, tid)
 
 
 def wt_branch(tid):
+    # Multi-goal: scope the task branch by goal slug (= goal worktree dir name) so two concurrent
+    # goals that both number tasks T-001 don't collide on a single gid/T-001. Back-compat: single
+    # goal at the repo root ⇒ no collision ⇒ keep plain gid/<tid> (avoids breaking in-flight goals).
+    if GOAL_IS_CWD:
+        return "gid/" + os.path.basename(os.path.abspath(".")) + "-" + tid
     return "gid/" + tid
 
 
 def goal_wt_path():
-    return os.path.join(WT_ROOT, GOAL_WT)
+    # Multi-goal: the goal worktree IS cwd ("."). Back-compat: .get-it-done/worktrees/_goal.
+    return "." if GOAL_IS_CWD else os.path.join(WT_ROOT, GOAL_WT)
 
 
 def setup_shared_gid(wt):
@@ -576,17 +591,18 @@ def setup_shared_gid(wt):
             done.append("symlink")
         except OSError:
             pass
-    # 3. exclude the .get-it-done symlink AND each link_dir symlink from `git status`
-    #    (slash-less — a trailing slash matches only dirs, not the symlink file). Shared
-    #    info/exclude; dedup-guarded.
-    link_dirs = load_git_state().get("link_dirs", [])
+    # 3. exclude the .get-it-done symlink from `git status` (slash-less — a trailing slash matches
+    #    only dirs, not the symlink). info/exclude is SHARED across all worktrees of the repo, so
+    #    we write ONLY `/.get-it-done` — NOT link_dirs (node_modules): adding those would hide new
+    #    untracked node_modules in the user's own checkout. scoped_add already keeps link_dirs out
+    #    of every commit, so the node_modules symlink just shows as an (cosmetic) untracked entry.
     rc, exc, _ = run_git(["-C", wt, "rev-parse", "--path-format=absolute",
                           "--git-path", "info/exclude"])
     if rc == 0 and exc:
         try:
             body = read(exc) or ""
             have = set(body.splitlines())
-            want = ["/.get-it-done"] + [f"/{d}" for d in link_dirs]
+            want = ["/.get-it-done"]
             add = [w for w in want if w not in have]
             if add:
                 with open(exc, "a", encoding="utf-8") as f:
@@ -671,41 +687,114 @@ def cmd_git_preflight():
                       "head_sha": head, "worktree_supported": supported}))
 
 
+def _hide_gid_in_worktree(path):
+    """Add '/.get-it-done' to the worktree's info/exclude so its REAL .get-it-done (goal
+    worktree only) is invisible to git and never committed. Idempotent, best-effort."""
+    rc, exc, _ = run_git(["-C", path, "rev-parse", "--path-format=absolute",
+                          "--git-path", "info/exclude"])
+    if rc == 0 and exc:
+        try:
+            body = read(exc) or ""
+            if "/.get-it-done" not in body.splitlines():
+                with open(exc, "a", encoding="utf-8") as f:
+                    f.write("/.get-it-done\n")
+        except OSError:
+            pass
+
+
+def _write_goal_git_state(path, slug, branch, head):
+    """Write/merge git_state.json INSIDE the goal worktree's .get-it-done (absolute — gid.py
+    runs at repo root here, so save_git_state would target the wrong dir). Returns the branch."""
+    gdir = os.path.join(path, GID_DIR)
+    os.makedirs(gdir, exist_ok=True)
+    sp = os.path.join(gdir, "git_state.json")
+    st = dict(DEFAULT_GIT_STATE)
+    existing = read(sp)
+    if existing:
+        try:
+            st.update(json.loads(existing))
+        except ValueError:
+            pass
+    _, cur_branch, _ = run_git(["-C", path, "rev-parse", "--abbrev-ref", "HEAD"])
+    br = cur_branch or st.get("goal_branch") or branch
+    st.update(goal_slug=st.get("goal_slug") or slug, goal_branch=br,
+              goal_base=st.get("goal_base") or head)
+    with open(sp, "w", encoding="utf-8") as f:
+        json.dump(st, f, ensure_ascii=False, indent=2)
+    return br
+
+
 def cmd_goal_worktree_init():
-    """Create the per-goal 'main' worktree (_goal) on gid/goal-<slug> from the user's HEAD.
-    ALL goal source changes accumulate there; the user's own branch/working tree stay clean.
-    Idempotent: reuses an existing _goal and re-asserts the shared-.get-it-done symlink."""
-    gs = load_git_state()
-    slug = goal_slug()
-    branch = "gid/goal-" + slug
-    path = goal_wt_path()
+    """Create the per-goal worktree on gid/goal-<slug> from the user's HEAD. Runs at the REPO
+    ROOT (never chdir'd). ALL goal source accumulates there; the user's branch/tree stay clean.
+
+    Multi-goal (default, `--slug` given): a GROUPED SIBLING worktree <repo>.gid-goals/<slug>
+    that CONTAINS its own real .get-it-done/ (hidden via info/exclude). NOT a symlink.
+    Back-compat (no `--slug`): the legacy _goal under .get-it-done/worktrees/ with a symlinked
+    .get-it-done (v1.3.0 behavior)."""
+    slug = _flag("--slug")
     _, head, _ = run_git(["rev-parse", "HEAD"])
-    if os.path.isdir(path):
-        setup_shared_gid(path)                               # re-assert symlink/sparse after a crash
-        # Keep the worktree's ACTUAL branch — goal.md text (and the derived slug) may have
-        # drifted via /adjust soft, but the goal worktree stays on its original branch.
-        _, cur_branch, _ = run_git(["-C", path, "rev-parse", "--abbrev-ref", "HEAD"])
-        branch = cur_branch or gs.get("goal_branch") or branch
-        gs.update(goal_slug=gs.get("goal_slug") or slug, goal_branch=branch,
-                  goal_base=gs.get("goal_base") or head)
+
+    # ---- back-compat: legacy _goal (no --slug) ----
+    if not slug:
+        gs = load_git_state()
+        slug = goal_slug()
+        branch = "gid/goal-" + slug
+        path = os.path.join(WT_ROOT, GOAL_WT)
+        if os.path.isdir(path):
+            setup_shared_gid(path)
+            _, cur_branch, _ = run_git(["-C", path, "rev-parse", "--abbrev-ref", "HEAD"])
+            branch = cur_branch or gs.get("goal_branch") or branch
+            gs.update(goal_slug=gs.get("goal_slug") or slug, goal_branch=branch,
+                      goal_base=gs.get("goal_base") or head)
+            save_git_state(gs)
+            print(json.dumps({"ok": True, "path": path, "branch": branch,
+                              "reused": True, "mode": "legacy"}))
+            return
+        os.makedirs(WT_ROOT, exist_ok=True)
+        rcb, _, _ = run_git(["rev-parse", "--verify", "--quiet", branch])
+        if rcb == 0:
+            rc, _, err = run_git(["worktree", "add", "--no-checkout", path, branch])
+        else:
+            rc, _, err = run_git(["worktree", "add", "--no-checkout", "-b", branch, path, "HEAD"])
+        if rc != 0:
+            print(json.dumps({"ok": False, "reason": err}))
+            return
+        steps = setup_shared_gid(path)
+        gs.update(goal_slug=slug, goal_branch=branch, goal_base=head)
         save_git_state(gs)
-        print(json.dumps({"ok": True, "path": path, "branch": branch, "reused": True}))
+        print(json.dumps({"ok": True, "path": path, "branch": branch, "base_sha": head,
+                          "reused": False, "mode": "legacy", "shared_gid": steps}, ensure_ascii=False))
         return
-    os.makedirs(WT_ROOT, exist_ok=True)
+
+    # ---- multi-goal: grouped sibling worktree with a REAL .get-it-done inside ----
+    branch = "gid/goal-" + slug
+    _, repo_root, _ = run_git(["rev-parse", "--show-toplevel"])
+    repo_root = repo_root or os.path.abspath(".")
+    gid_goals_root = os.path.join(os.path.dirname(repo_root),
+                                  os.path.basename(repo_root) + ".gid-goals")
+    path = _flag("--base-path") or os.path.join(gid_goals_root, slug)
+
+    if os.path.isdir(path):                                  # idempotent reuse / crash re-assert
+        _hide_gid_in_worktree(path)
+        br = _write_goal_git_state(path, slug, branch, head)
+        print(json.dumps({"ok": True, "path": os.path.abspath(path), "branch": br,
+                          "reused": True, "mode": "multi"}, ensure_ascii=False))
+        return
+    os.makedirs(gid_goals_root, exist_ok=True)
     rcb, _, _ = run_git(["rev-parse", "--verify", "--quiet", branch])
     if rcb == 0:
-        rc, _, err = run_git(["worktree", "add", "--no-checkout", path, branch])
+        rc, _, err = run_git(["worktree", "add", path, branch])     # full checkout
     else:
-        rc, _, err = run_git(["worktree", "add", "--no-checkout", "-b", branch, path, "HEAD"])
+        rc, _, err = run_git(["worktree", "add", "-b", branch, path, "HEAD"])
     if rc != 0:
         print(json.dumps({"ok": False, "reason": err}))
         return
-    steps = setup_shared_gid(path)
-    linked = [d for d in gs.get("link_dirs", []) if link_one(d, path)]
-    gs.update(goal_slug=slug, goal_branch=branch, goal_base=head)
-    save_git_state(gs)
-    print(json.dumps({"ok": True, "path": path, "branch": branch, "base_sha": head,
-                      "shared_gid": steps, "linked": linked, "reused": False}, ensure_ascii=False))
+    _hide_gid_in_worktree(path)
+    br = _write_goal_git_state(path, slug, branch, head)
+    linked = [d for d in DEFAULT_GIT_STATE.get("link_dirs", []) if link_one(d, path)]
+    print(json.dumps({"ok": True, "path": os.path.abspath(path), "branch": br, "base_sha": head,
+                      "reused": False, "mode": "multi", "linked": linked}, ensure_ascii=False))
 
 
 def cmd_goal_commit_task(tid):
@@ -745,11 +834,11 @@ def cmd_worktree_add(tid):
     path, branch = wt_path(tid), wt_branch(tid)
     base_ref = gs.get("goal_branch") or "HEAD"      # branch from the goal branch in goal mode
     _, base_sha, _ = run_git(["rev-parse", base_ref])
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)   # gid_goals_root (sibling) or WT_ROOT
     if os.path.isdir(path):
         setup_shared_gid(path)
         print(json.dumps({"ok": True, "path": path, "branch": branch, "reused": True}))
         return
-    os.makedirs(WT_ROOT, exist_ok=True)
     rcb, _, _ = run_git(["rev-parse", "--verify", "--quiet", branch])
     if rcb == 0:                                    # branch exists (blocked-retry / crash) → recreate WT
         rc, _, err = run_git(["worktree", "add", "--no-checkout", path, branch])
@@ -855,34 +944,79 @@ LIVE_WT_STATUSES = {"claimed", "executed", "validating", "needs_rework"}
 
 
 def cmd_worktree_gc():
+    """Reap TASK worktrees whose task is no longer live (done/blocked/absent). Iterates the
+    tracked git_state worktrees map so it works in BOTH modes (multi-goal siblings + back-compat
+    nested) — wt_path() resolves the right location. Never touches the goal worktree."""
     gs = load_git_state()
     tasks, _ = load_tasks()
     live = {tid for tid, t in tasks.items()
             if t.get("touches") and t.get("status") in LIVE_WT_STATUSES}
     run_git(["worktree", "prune"])
     removed, kept = [], []
-    if os.path.isdir(WT_ROOT):
-        for name in sorted(os.listdir(WT_ROOT)):
-            p = os.path.join(WT_ROOT, name)
-            if not os.path.isdir(p):
-                continue
-            if name == GOAL_WT:                  # the goal "main" worktree is never task-reaped
-                kept.append(name)
-                continue
-            if name in live:
-                kept.append(name)
-                continue
+    for tid in list(gs.get("worktrees", {}).keys()):
+        if tid in live:
+            kept.append(tid)
+            continue
+        p = wt_path(tid)
+        if os.path.isdir(p):
             run_git(["worktree", "remove", "--force", p])
-            if tasks.get(name, {}).get("status") != "blocked":
-                run_git(["branch", "-D", wt_branch(name)])
-            gs.get("worktrees", {}).pop(name, None)
-            removed.append(name)
+        if tasks.get(tid, {}).get("status") != "blocked":
+            run_git(["branch", "-D", wt_branch(tid)])
+        gs.get("worktrees", {}).pop(tid, None)
+        removed.append(tid)
     run_git(["worktree", "prune"])
     save_git_state(gs)
     print(json.dumps({"removed": removed, "kept": kept}, ensure_ascii=False))
 
 
+def cmd_goal_reset():
+    """Goal-scoped reset (multi-goal): remove ONLY THIS goal's task worktrees (siblings
+    <slug>-T-*) + their gid/T-* branches, and clear the in-flight task tracking. NEVER touches
+    other gid/goal-* goals, nor this goal's own worktree/branch. Run with --base = goal worktree."""
+    gs = load_git_state()
+    goal_wt = os.path.abspath(".")                  # cwd = goal worktree (GOAL_IS_CWD)
+    parent = os.path.dirname(goal_wt)
+    prefix = os.path.basename(goal_wt) + "-"        # task worktrees: <slug>-<tid>
+    _, out, _ = run_git(["worktree", "list", "--porcelain"])
+    removed, cur = [], {}
+    for ln in out.splitlines():
+        if ln.startswith("worktree "):
+            cur = {"path": ln[len("worktree "):].strip()}
+        elif ln.startswith("branch refs/heads/"):
+            br = ln[len("branch refs/heads/"):].strip()
+            p = cur.get("path", "")
+            ap = os.path.abspath(p)
+            # this goal's task worktrees: dir <slug>-<tid> on branch gid/<slug>-<tid>.
+            if (os.path.dirname(ap) == parent and os.path.basename(ap).startswith(prefix)
+                    and br.startswith("gid/" + prefix)):
+                run_git(["worktree", "remove", "--force", p])
+                run_git(["branch", "-D", br])
+                removed.append(os.path.basename(ap))
+    run_git(["worktree", "prune"])
+    gs["worktrees"], gs["milestone_bases"] = {}, {}     # keep goal_slug/goal_branch/goal_base
+    save_git_state(gs)
+    print(json.dumps({"ok": True, "removed": removed}, ensure_ascii=False))
+
+
+def cmd_goals():
+    """Registry: list active goals = worktrees on a gid/goal-* branch (git is the source of
+    truth — no separate file). Runs at the repo root."""
+    _, out, _ = run_git(["worktree", "list", "--porcelain"])
+    goals, cur = [], {}
+    for ln in out.splitlines():
+        if ln.startswith("worktree "):
+            cur = {"path": ln[len("worktree "):].strip()}
+        elif ln.startswith("branch refs/heads/gid/goal-"):
+            br = ln[len("branch refs/heads/"):].strip()
+            cur["branch"] = br
+            cur["slug"] = br[len("gid/goal-"):]
+            goals.append(cur)
+    print(json.dumps({"goals": goals}, ensure_ascii=False, indent=2))
+
+
 def cmd_worktree_reset_all():
+    """Back-compat single-goal reset (base = repo root). In multi-goal use goal-reset instead —
+    this would delete ALL gid/goal-* and the nested worktrees dir."""
     _, out, _ = run_git(["worktree", "list", "--porcelain"])
     wt_abs = os.path.abspath(WT_ROOT)
     for line in out.splitlines():
@@ -999,6 +1133,10 @@ def cmd_consolidate_final():
 
 # ---------------------------------------------------------------- arg helpers
 
+_VALUE_FLAGS = {"--base", "--slug", "--base-path", "--attempt",
+                "--git-mode", "--max-worktrees", "--max-parallel"}
+
+
 def _flag(name, default=None):
     if name in sys.argv:
         i = sys.argv.index(name)
@@ -1007,19 +1145,47 @@ def _flag(name, default=None):
 
 
 def _positional():
-    """First non-flag token after the subcommand (argv[2]), if it isn't a --flag."""
-    return sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else None
+    """First non-flag token after the subcommand, skipping flags AND their values."""
+    args = sys.argv[2:]
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in _VALUE_FLAGS:
+            i += 2
+            continue
+        if a.startswith("--"):
+            i += 1
+            continue
+        return a
+    return None
 
 
 # ---------------------------------------------------------------- main
 
+# Subcommands that must run from the REPO ROOT (the goal worktree may not exist yet, or they
+# enumerate across all worktrees), so they are NOT redirected by --base/GID_BASE.
+NO_CHDIR_CMDS = {"goal-worktree-init", "git-preflight", "goals"}
+
+
 def main():
     if len(sys.argv) < 2:
-        die("usage: gid.py <state|dag-check|pool|rqs|batch-id|truncate-logs|git-preflight|"
-            "goal-worktree-init|goal-commit-task|worktree-add|worktree-commit-wip|worktree-merge|"
-            "worktree-drop|worktree-gc|worktree-reset-all|check-stray-edits|"
-            "consolidate-milestone|consolidate-final>")
+        die("usage: gid.py <state|dag-check|pool|rqs|batch-id|truncate-logs|git-preflight|goals|"
+            "goal-worktree-init|goal-commit-task|goal-reset|worktree-add|worktree-commit-wip|"
+            "worktree-merge|worktree-drop|worktree-gc|worktree-reset-all|check-stray-edits|"
+            "consolidate-milestone|consolidate-final>  [--base <goal-worktree>]")
     cmd = sys.argv[1]
+
+    # Base switch: target a goal's worktree instead of cwd. Unset ⇒ base = cwd = repo root
+    # (single-goal back-compat). goal-worktree-init/git-preflight/goals stay at the repo root.
+    base = _flag("--base") or os.environ.get("GID_BASE")
+    if base and cmd not in NO_CHDIR_CMDS:
+        global GOAL_IS_CWD
+        try:
+            os.chdir(base)
+            GOAL_IS_CWD = True            # cwd is now the goal worktree (multi-goal mode)
+        except OSError as e:
+            die(f"--base/GID_BASE not usable: {base} ({e})")
+
     tid = _positional()
 
     if cmd == "pool":
@@ -1029,6 +1195,8 @@ def main():
         return
     if cmd == "goal-commit-task":
         cmd_goal_commit_task(tid); return
+    if cmd == "goal-reset":
+        cmd_goal_reset(); return
     if cmd == "worktree-add":
         cmd_worktree_add(tid); return
     if cmd == "worktree-commit-wip":
@@ -1049,6 +1217,7 @@ def main():
         "batch-id": cmd_batch_id,
         "truncate-logs": cmd_truncate_logs,
         "git-preflight": cmd_git_preflight,
+        "goals": cmd_goals,
         "goal-worktree-init": cmd_goal_worktree_init,
         "worktree-gc": cmd_worktree_gc,
         "worktree-reset-all": cmd_worktree_reset_all,

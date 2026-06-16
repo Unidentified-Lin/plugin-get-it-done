@@ -11,7 +11,25 @@ You are executing **/continue** — the **batch-aware dispatcher** for the auton
 - **PLANNING** remains N=1 (planner is a singleton role).
 Milestone validators gate downstream milestones: a task in milestone `M_k` cannot start until every `M_1..M_{k-1}` has been milestone-validated.
 
-All state lives under `.get-it-done/` in the **project's working directory** (the user's repo, NOT the plugin install directory). Spawnable sub-agents: `planner`, `analyst`, `executor`, `validator`, `reflector`. Fall back to `get-it-done:<name>` only on a bare-name collision.
+Spawnable sub-agents: `planner`, `analyst`, `executor`, `validator`, `reflector`. Fall back to `get-it-done:<name>` only on a bare-name collision.
+
+## GID_BASE — the active goal's worktree (multi-goal)
+
+Every goal runs in its **own git worktree** under `<repo>.gid-goals/<slug>/` (branch `gid/goal-<slug>`), which contains that goal's `.get-it-done/`. **`GID_BASE` = that worktree's absolute path.** This is how one repo-root window drives a chosen goal, and how multiple windows drive different goals at once.
+
+- **Every `.get-it-done/...` path in this skill is under `$GID_BASE/`** — read/write `"$GID_BASE/.get-it-done/..."`.
+- **Pass `--base "$GID_BASE"` to every `python3 "$GID" <cmd>`** EXCEPT `git-preflight`, `goals`, and `goal-worktree-init` (those run at the repo root).
+- **Spawn sub-agents with `repo_root = $GID_BASE`** (their cwd / state home).
+- **Back-compat:** if `GID_BASE` is unset, base = repo root (legacy single-goal `.get-it-done/`). Everything still works.
+- **Terminology:** where steps below say "`_goal`" / "the goal worktree", that means **`$GID_BASE` itself** in multi-goal mode (the goal worktree IS the base; `gid.py` operates there via `--base`), or the legacy `.get-it-done/worktrees/_goal` in back-compat mode. Task worktrees are grouped siblings `<repo>.gid-goals/<slug>-<T>` whose `.get-it-done/` symlinks to `$GID_BASE/.get-it-done/`.
+
+**Resolving GID_BASE (do this first, before Step 0):**
+1. If this window already established `GID_BASE` (you set it earlier this session via `/objective` or a prior `/continue`) → reuse it. Validate it still appears in `python3 "$GID" goals`; if gone, re-resolve.
+2. Else run `python3 "$GID" goals`:
+   - **0 goals** → no isolated goals exist; if a legacy repo-root `.get-it-done/state.md` exists, run in single-goal back-compat (`GID_BASE` unset = repo root). Otherwise tell the user to run `/objective <goal>` and stop.
+   - **1 goal** → set `GID_BASE` = its `path`.
+   - **≥2 goals** → ask the user which goal (list the slugs) and set `GID_BASE` to the chosen `path`.
+3. `export GID_BASE="<path>"` so every command below inherits it.
 
 ## Step 0: Bootstrap (defensive, idempotent)
 
@@ -23,9 +41,9 @@ All state lives under `.get-it-done/` in the **project's working directory** (th
 mkdir -p "${CLAUDE_PLUGIN_DATA}/team_learnings/agent_rules"
 rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team_learnings/" "${CLAUDE_PLUGIN_DATA}/team_learnings/"
 
-# B — per-project state + scratch workspace
-mkdir -p .get-it-done/context .get-it-done/findings .get-it-done/workspace
-rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" .get-it-done/
+# B — per-goal state + scratch workspace (under $GID_BASE; = repo root when GID_BASE unset)
+mkdir -p "${GID_BASE:-.}"/.get-it-done/context "${GID_BASE:-.}"/.get-it-done/findings "${GID_BASE:-.}"/.get-it-done/workspace
+rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" "${GID_BASE:-.}/.get-it-done/"
 ```
 
 `.get-it-done/workspace/` (per-sub-agent scratch) and `.get-it-done/findings/` (per-research-request findings) are sub-agent-owned write surfaces; the dispatcher creates the directories but never writes inside them.
@@ -49,19 +67,18 @@ python3 "$GID" state    # smoke test; on Windows try `python` if `python3` is ab
 ## Step 0.6: Git mode + goal worktree + reaper
 
 ```
-preflight := python3 "$GID" git-preflight
+preflight := python3 "$GID" git-preflight        # at repo root (no --base)
 IF preflight.is_git AND preflight.worktree_supported:
     git_mode := worktree
-    python3 "$GID" goal-worktree-init      # idempotent — creates the per-goal "main" worktree
-                                           # .get-it-done/worktrees/_goal on branch gid/goal-<slug>
-                                           # from the user's HEAD, with a shared .get-it-done symlink.
-                                           # ALL goal source changes accumulate there; the user's own
-                                           # branch + working tree stay clean. Re-asserts the symlink on crash.
+    # Re-assert the goal worktree (idempotent). Multi-goal: it already exists (created by /objective)
+    # — this confirms it + re-hides its .get-it-done after a crash. slug = basename($GID_BASE).
+    IF GID_BASE set:  python3 "$GID" goal-worktree-init --slug "$(basename "$GID_BASE")"
+    ELSE:             python3 "$GID" goal-worktree-init        # back-compat legacy _goal
 ELSE:
     git_mode := fallback
-    append once-per-goal "<ISO> [GIT_FALLBACK] non-git/unusable; source executors write the main tree directly (no rollback)" to progress_log.md
-max_parallel := git_state.json `max_parallel` (default 5 — parallel by default)
-python3 "$GID" worktree-gc      # reaper: prune git metadata + remove any TASK worktree not tied to a live task. NEVER reaps _goal. Idempotent.
+    append once-per-goal "<ISO> [GIT_FALLBACK] non-git/unusable; source executors write the main tree directly (no rollback)" to "$GID_BASE/.get-it-done/progress_log.md"
+max_parallel := "$GID_BASE/.get-it-done/git_state.json" `max_parallel` (default 5 — parallel by default)
+python3 "$GID" worktree-gc --base "$GID_BASE"     # reaper: remove any TASK worktree not tied to a live task. NEVER reaps the goal worktree. Idempotent.
 ```
 
 `git_mode` + `max_parallel` drive Step 5/6/7/9. **Parallelism is driven by the plan, not a manual knob** — `max_parallel` is only a CEILING (default 5 = the batch cap); the pool naturally parallelizes whatever the DAG allows:
@@ -202,7 +219,7 @@ This is defensive; planner self-audit should catch this first, but the dispatche
 
 ## Step 5: Pick the actionable batch (Stage 3: heterogeneous, up to N work items)
 
-**Script path** (EXECUTING phase): `python3 "$GID" pool --git-mode <git_mode> --max-worktrees 8 --max-parallel <max_parallel>` computes everything below deterministically — derived milestone statuses, the priority-ordered pool (P1→P4) with Touches collision deferral, the sequentiality cap, the worktree hard-cap / fallback race guard, and the first-5 `batch` slice. Map its output to the decisions:
+**Script path** (EXECUTING phase): `python3 "$GID" pool --base "$GID_BASE" --git-mode <git_mode> --max-worktrees 8 --max-parallel <max_parallel>` computes everything below deterministically — derived milestone statuses, the priority-ordered pool (P1→P4) with Touches collision deferral, the sequentiality cap, the worktree hard-cap / fallback race guard, and the first-5 `batch` slice. Map its output to the decisions:
 - `batch` non-empty → that IS your batch; log each `deferred` entry as `<ISO> [DEFER] <task_id> <reason>` (reasons: `touches conflict with ...`, `max_parallel` = more source executors than `max_parallel` allows this tick, `wt_cap` = task-worktree hard-cap backpressure, `fallback_race_guard` = #6 guard in non-git mode); GOTO Step 6.
 - `batch` empty AND `all_done_and_validated: true` → set phase = REPORTING; run report_and_reflect(); EXIT.
 - `batch` empty AND `any_blocked: true` → set phase = AWAITING_HUMAN; EXIT with blocked-task summary.
@@ -401,7 +418,7 @@ Inputs for this run:
   task_id: <item.task_id>                 (planner: null; analyst: RQ-X; executor/validator: T-XXX or M-X)
   scratch: <item.scratch>                 (executor only — your write surface)
   batch_id: <batch_id>
-  repo_root: <abs path to project root>   (worktree-mode source executors/validators only)
+  repo_root: $GID_BASE                     (the goal worktree; worktree-mode source executors/validators only)
   worktree: <_goal path OR task worktree path>   (worktree-mode source executors/validators only — cwd here for code/build/test)
 
 Read your declared inputs, perform your work, write your artifacts to the paths listed in your
@@ -422,7 +439,7 @@ Use `subagent_type: get-it-done:<role>` (namespaced form to avoid any bare-name 
 
 **Platform note — sub-agents MUST run isolated, not inline** (see `platform-adapter.md` Section 4). On Claude Code the `Agent` tool guarantees this. On **GitHub Copilot CLI**, delegate to the discoverable custom agent **by name** (e.g. `get-it-done-executor`) and instruct it to run in its own context and return only its `---agent-return---` block — otherwise Copilot runs the work inline and breaks the relay. If Copilot does not run delegations concurrently, spawn fewer at once (down to one-at-a-time); flow control is unaffected.
 
-**Worktree-mode source items** (executor or task-validator for a source-touching task in `worktree` git_mode): set `worktree` to the path from Step 6 — the `_goal` worktree (`.get-it-done/worktrees/_goal`) in sequential mode, or the task worktree (`.get-it-done/worktrees/<T>`) in parallel mode. The executor and its validator for the same task always get the SAME worktree. Include the `repo_root` + `worktree` lines above, and add this instruction: "Make all source-code edits and run all build/test commands inside `worktree` (cwd there). Its `.get-it-done/` is a **symlink to the repo-root `.get-it-done/`** — read/write all get-it-done state and your scratch dir through it (equivalently via `repo_root/.get-it-done/...`); they are the same files. Do NOT run any git command; the dispatcher owns git." Milestone-mode validators run on the `_goal` worktree (the goal branch holds the merged source); all non-source items omit both lines (they operate on `repo_root` / their scratch as before).
+**Worktree-mode source items** (executor or task-validator for a source-touching task in `worktree` git_mode): set `worktree` to the path from Step 6 — the **goal worktree** (`$GID_BASE`) when this task runs sequentially, or its **task worktree** (`<repo>.gid-goals/<slug>-<T>`) in parallel mode. The executor and its validator for the same task always get the SAME worktree. Include the `repo_root` (= `$GID_BASE`) + `worktree` lines above, and add this instruction: "Make all source-code edits and run all build/test commands inside `worktree` (cwd there). When `worktree` is a task worktree, its `.get-it-done/` is a **symlink to the goal worktree's `.get-it-done/`** (`$GID_BASE/.get-it-done/`); when `worktree` IS the goal worktree, its `.get-it-done/` is right there. Either way read/write all get-it-done state and your scratch dir through `repo_root/.get-it-done/...`. Do NOT run any git command; the dispatcher owns git." Milestone-mode validators run on the goal worktree (`$GID_BASE`, whose branch holds the merged source); all non-source items omit both lines.
 
 The dispatcher waits for ALL items to return before proceeding to Step 8. There is no per-item early collection — Claude Code returns all parallel Task results together when the slowest one finishes.
 

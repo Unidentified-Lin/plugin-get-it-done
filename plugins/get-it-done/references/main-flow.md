@@ -113,20 +113,21 @@ EXECUTING: dispatcher batch per tick
   - milestone all done → milestone validator
   Batch size ≤ 5, heterogeneous agents per batch.
 
-Git isolation (git projects, goal-worktree model): at goal start the dispatcher
-creates ONE _goal worktree on branch gid/goal-<slug> (from the user's HEAD); ALL
-goal source accumulates there, so the user's own branch/working tree stay clean
-and concurrent goals can share a repo. Parallel by default, plan-driven: independent
-tasks (deps satisfied, non-overlapping Touches) run concurrently, each in a per-task
-worktree branched from the goal branch, merged back on validator pass — up to
-max_parallel (default 5) / max_worktrees. Dependent or same-file tasks serialize
-automatically; a lone eligible task runs in _goal. Executor + its validator share a
-task's worktree; validator PASS commits one commit on the goal branch. Each validated
-milestone consolidates to ONE commit on the goal branch (no intermediate commits
-kept). Every worktree shares one symlinked .get-it-done/. At completion the goal
-branch is left for the user to review/merge (never auto-merged). Non-git projects
-fall back to direct edits + a scheduling guard. All git work is done by gid.py;
-bookkeeping in .get-it-done/git_state.json.
+Git isolation (git projects, multi-goal worktree model): each goal runs in its OWN
+worktree <repo>.gid-goals/<slug> (branch gid/goal-<slug> from HEAD) containing its
+own .get-it-done/. The dispatcher runs at repo root but targets a goal via GID_BASE
+(--base). Multiple windows drive CONCURRENT goals on one repo — separate worktrees +
+per-worktree indexes, git-safe, no cross-session lock. ALL goal source accumulates on
+the goal branch; the user's own branch/tree stay clean. Parallel by default, plan-
+driven: independent (disjoint-Touches) tasks run concurrently in grouped-sibling task
+worktrees <slug>-<T> branched from the goal branch, merged back on validator pass — up
+to max_parallel (default 5) / max_worktrees. Dependent/same-file tasks serialize; a
+lone eligible task runs in the goal worktree. Each validated milestone consolidates to
+ONE commit on the goal branch (no intermediate commits kept). A task worktree's
+.get-it-done/ symlinks to the goal worktree's. At completion the goal branch is left
+for the user to review/merge (never auto-merged). gid.py goals lists active goals;
+goal-reset clears one goal. Back-compat: GID_BASE unset = single-goal at repo root.
+Non-git → direct edits + scheduling guard.
 ```
 
 ---

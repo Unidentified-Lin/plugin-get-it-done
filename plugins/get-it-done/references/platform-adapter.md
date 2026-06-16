@@ -233,15 +233,17 @@ There is no Skill tool. Read the target skill's `SKILL.md` from the plugin root 
 
 ---
 
-## 9.5. Git worktree operations (autonomous EXECUTING)
+## 9.5. Git worktree operations + multi-goal (GID_BASE)
 
-In git projects the dispatcher creates ONE per-goal "main" worktree `_goal` at `.get-it-done/worktrees/_goal/` on branch `gid/goal-<slug>` (gitignored); all goal source changes accumulate there, the user's branch stays clean. Parallelism is plan-driven: independent tasks (deps satisfied, non-overlapping `Touches`) run concurrently in per-task worktrees branched from the goal branch, up to `max_parallel` (default 5) / `max_worktrees`; dependent or same-file tasks serialize automatically, and a lone eligible task runs directly in `_goal`. **All git work is done by `gid.py`** (`goal-worktree-init`, `goal-commit-task`, `worktree-add/-commit-wip/-merge/-drop/-gc/-reset-all`, `consolidate-milestone/-final`, `check-stray-edits`) — so the only cross-platform difference is the Python invocation (`python3`, fall back to `python` on Windows), identical to Step 0.5.
+Each goal runs in its **own git worktree** under `<repo>.gid-goals/<slug>/` (grouped sibling of the repo) on branch `gid/goal-<slug>` from the repo's HEAD. That worktree **contains its own real `.get-it-done/`** (hidden from git via the worktree's `info/exclude`). All the goal's source accumulates on `gid/goal-<slug>`; the user's own checkout/branch stays clean. **`GID_BASE` = the active goal's worktree path** — the dispatcher runs at the repo root but targets a goal by passing `--base "$GID_BASE"` to `gid.py` (which `os.chdir`s there). Multiple windows can each set a different `GID_BASE` and drive **concurrent goals** on one repo with no cross-session lock (separate worktrees + per-worktree git indexes; only the shared object/ref store, which is git-safe). `gid.py goals` lists active goals (from `git worktree list`); `gid.py goal-reset` clears one goal's task worktrees without touching others. **Back-compat:** `GID_BASE` unset ⇒ base = repo root ⇒ legacy single-goal `.get-it-done/` at the repo root (a `_goal` worktree under `.get-it-done/worktrees/`).
 
-Every worktree's `.get-it-done/` is a **symlink** to the single repo-root `.get-it-done/` (`gid.py` sparse-excludes the tracked copy and symlinks it back). Dependency dirs (`node_modules`, …) are likewise linked so build/test run without reinstalling:
-- **macOS / Linux**: `os.symlink` (symbolic link).
-- **Windows**: directory junction `mklink /J` — works on local NTFS **without admin or Developer Mode** (only symbolic links `/D` need elevation). `gid.py` picks the right one automatically.
+Parallelism is plan-driven: independent tasks (deps satisfied, non-overlapping `Touches`) run concurrently in **grouped-sibling task worktrees** `<repo>.gid-goals/<slug>-<T>` branched from the goal branch (up to `max_parallel` default 5 / `max_worktrees`); dependent or same-file tasks serialize automatically; a lone eligible task runs directly in the goal worktree. All git work is done by `gid.py` — the only cross-platform difference is the Python invocation (`python3` / `python` on Windows).
 
-Non-git projects (or when `git-preflight` reports git unusable) fall back to direct main-tree edits — no worktrees, no rollback — plus a Step-5 scheduling guard that keeps build-running validators out of the same batch as source executors.
+A **task** worktree's `.get-it-done/` is a **symlink** to the **goal** worktree's `.get-it-done/` (one shared copy per goal). Dependency dirs (`node_modules`, …) are linked so build/test run without reinstalling:
+- **macOS / Linux**: `os.symlink`.
+- **Windows**: directory junction `mklink /J` — works on local NTFS **without admin or Developer Mode**. `gid.py` picks the right one automatically. The goal worktree's own `.get-it-done/` is a real dir (no symlink), hidden via `info/exclude`.
+
+Non-git projects (or when `git-preflight` reports git unusable) fall back to direct edits — no worktrees, no rollback — plus a Step-5 scheduling guard that keeps build-running validators out of the same batch as source executors.
 
 ## 10. Quick Decision Table
 
