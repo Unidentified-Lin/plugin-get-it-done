@@ -94,7 +94,7 @@ After the user confirms the task list:
    - PASS → continue below.
    - RETURN TO TASK DETAILING / IMPLEMENTATION DIRECTION / REQUIREMENTS CONFIRMATION → go back to that stage, fix, re-confirm with the user, re-run plan-reviewer.
 2. Mark the planning document status as `已凍結，進入執行`.
-3. **Establish the goal worktree (GID_BASE)** — like `/objective` Step 0a: derive a slug, `GID := ${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py`, `python3 "$GID" git-preflight`; if git+worktree-capable, `python3 "$GID" goal-worktree-init --slug "<slug>"` → `export GID_BASE = result.path` (else GID_BASE unset = repo-root back-compat). All `.get-it-done/...` below are under `"$GID_BASE/"`.
+3. **Establish the goal worktree (GID_BASE)** — like `/objective` Step 0a: derive a slug, `GID_PY := ${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py`, `python3 "$GID_PY" git-preflight`; if git+worktree-capable, `python3 "$GID_PY" goal-worktree-init --slug "<slug>"` → `export GID_BASE = result.path` (else GID_BASE unset = repo-root back-compat). All `.get-it-done/...` below are under `"$GID_BASE/"`.
 4. **Initialize get-it-done execution state** under `$GID_BASE` (follow the Plan Freeze & Handoff section of `task-breakdown-guide.md` exactly):
    - Bootstrap `"$GID_BASE/.get-it-done/"` from templates via `bootstrap.py init` (preserves `git_state.json`; also initializes A-side team_learnings)
    - Write `"$GID_BASE/.get-it-done/goal.md"` with the feature description

@@ -24,17 +24,17 @@ Extract the goal from the user's message — everything after `/objective`. If e
 Each goal runs in its **own git worktree** under `<repo>.gid-goals/<slug>/` so multiple goals can run concurrently from one repo-root window without colliding, and your own checkout stays clean.
 
 ```
-GID := "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py"
-preflight := python3 "$GID" git-preflight              # at repo root
+GID_PY := "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py"
+preflight := python3 "$GID_PY" git-preflight              # at repo root
 slug := a short lowercase-hyphenated slug from the goal text (e.g. "add-login-flow"; keep <40 chars, unique)
 IF preflight.is_git AND preflight.worktree_supported:
-    result := python3 "$GID" goal-worktree-init --slug "<slug>"   # creates <repo>.gid-goals/<slug> on gid/goal-<slug> from HEAD
+    result := python3 "$GID_PY" goal-worktree-init --slug "<slug>"   # creates <repo>.gid-goals/<slug> on gid/goal-<slug> from HEAD
     export GID_BASE = result.path                       # absolute path to the goal worktree
 ELSE:
     GID_BASE unset → single-goal back-compat at the repo root (non-git or no worktree support)
 ```
 
-**GID_BASE = the active goal's worktree** (unset ⇒ repo root). For the rest of this skill: every `.get-it-done/...` path is under `"$GID_BASE/.get-it-done/..."`, and every `python3 "$GID" <cmd>` (except `git-preflight`/`goals`/`goal-worktree-init`) takes `--base "$GID_BASE"`. Tell the user, at the end, that this goal lives in worktree `$GID_BASE` and runs independently of other goals/windows.
+**GID_BASE = the active goal's worktree** (unset ⇒ repo root). For the rest of this skill: every `.get-it-done/...` path is under `"$GID_BASE/.get-it-done/..."`, and every `python3 "$GID_PY" <cmd>` (except `git-preflight`/`goals`/`goal-worktree-init`) takes `--base "$GID_BASE"`. Tell the user, at the end, that this goal lives in worktree `$GID_BASE` and runs independently of other goals/windows.
 
 ## Step 0: Bootstrap
 

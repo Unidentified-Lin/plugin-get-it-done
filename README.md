@@ -104,4 +104,4 @@ cat .get-it-done/context/domain_knowledge.md       # Project learnings
 
 ---
 
-**Version**: 1.4.0 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin
+**Version**: 1.4.1 | **Stage**: 5 (A/B Learning Architecture Complete) | **Author**: Unidentified-Lin
