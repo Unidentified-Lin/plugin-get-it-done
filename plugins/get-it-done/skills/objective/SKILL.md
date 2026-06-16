@@ -42,35 +42,21 @@ ELSE:
 
 **macOS / Linux (Claude Code and GitHub Copilot):**
 ```bash
-: "${CLAUDE_PLUGIN_ROOT:?CLAUDE_PLUGIN_ROOT is not set — refusing to read templates from / }"
-: "${CLAUDE_PLUGIN_DATA:?CLAUDE_PLUGIN_DATA is not set — refusing to write learnings to / }"
+# Resolve paths (Claude Code: env vars set by harness; Copilot: discover from filesystem)
+BOOTSTRAP="${CLAUDE_PLUGIN_ROOT}/skills/objective/scripts/bootstrap.py"   # Copilot: {plugin-root}/skills/objective/scripts/bootstrap.py
+PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.copilot/data/get-it-done}"
 
-# A — cross-project agent-team learnings
-mkdir -p "${CLAUDE_PLUGIN_DATA}/team_learnings/agent_rules"
-rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team_learnings/" "${CLAUDE_PLUGIN_DATA}/team_learnings/"
-
-# B — per-goal state + sub-agent scratch surfaces (under $GID_BASE; = repo root when GID_BASE unset)
-mkdir -p "${GID_BASE:-.}"/.get-it-done/context "${GID_BASE:-.}"/.get-it-done/findings "${GID_BASE:-.}"/.get-it-done/workspace
-rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" "${GID_BASE:-.}/.get-it-done/"
+python3 "$BOOTSTRAP" init --base "${GID_BASE:-.}" --plugin-data "$PLUGIN_DATA"
 ```
-(`goal-worktree-init` already created `$GID_BASE/.get-it-done/git_state.json`; `--ignore-existing` preserves it.)
+(`goal-worktree-init` already created `$GID_BASE/.get-it-done/git_state.json`; `init` preserves it via skip-existing logic.)
 
 **Windows (GitHub Copilot — PowerShell):**
 ```powershell
-# Detect plugin root (most recently modified wins when multiple versions are cached)
-$PLUGIN_ROOT = Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-$PLUGIN_DATA = "$HOME\.copilot\data\get-it-done"
-
-# A — cross-project learnings
-New-Item -ItemType Directory -Path "$PLUGIN_DATA\team_learnings\agent_rules" -Force | Out-Null
-robocopy "$PLUGIN_ROOT\templates\team_learnings" "$PLUGIN_DATA\team_learnings" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
-if ($LASTEXITCODE -ge 8) { throw "robocopy (team_learnings) failed with code $LASTEXITCODE" }
-
-# B — per-project state
-New-Item -ItemType Directory -Path ".get-it-done\context",".get-it-done\findings",".get-it-done\workspace" -Force | Out-Null
-robocopy "$PLUGIN_ROOT\templates\.get-it-done" ".get-it-done" /E /XC /XN /XO /NFL /NDL /NJH /NJS | Out-Null
-if ($LASTEXITCODE -ge 8) { throw "robocopy (.get-it-done) failed with code $LASTEXITCODE" }
-$global:LASTEXITCODE = 0   # robocopy returns 1-7 on SUCCESS — normalize so the harness doesn't read success as failure
+$PLUGIN_ROOT = if ($env:CLAUDE_PLUGIN_ROOT) { $env:CLAUDE_PLUGIN_ROOT } else {
+  Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+}
+$PLUGIN_DATA = if ($env:CLAUDE_PLUGIN_DATA) { $env:CLAUDE_PLUGIN_DATA } else { "$HOME\.copilot\data\get-it-done" }
+python "$PLUGIN_ROOT\skills\objective\scripts\bootstrap.py" init --base "." --plugin-data $PLUGIN_DATA
 ```
 
 `.get-it-done/workspace/` (per-executor scratch) and `.get-it-done/findings/` (per-analyst findings) are sub-agent write surfaces — bootstrap only creates the directory; sub-agents fill files.
@@ -133,28 +119,15 @@ Human (via /objective)
 
 ## Step 4: Reset per-goal working files
 
-Overwrite per-goal scaffold files with explicit `cp -f` commands (ensures no stale v1-style files interfere):
+Force-copy per-goal scaffold files and clear stale artifacts via `bootstrap.py reset`, then clean up task worktrees via `gid.py`:
 
 ```bash
-B="${GID_BASE:-.}"        # the goal worktree (or repo root in back-compat)
-# (1) Overwrite per-goal scaffolds from templates
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/task_queue.md" "$B/.get-it-done/task_queue.md"
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/metrics.md" "$B/.get-it-done/metrics.md"
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/research_requests.md" "$B/.get-it-done/research_requests.md"
-cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/findings/_meta.md" "$B/.get-it-done/findings/_meta.md"
+BOOTSTRAP="${CLAUDE_PLUGIN_ROOT}/skills/objective/scripts/bootstrap.py"   # Copilot: {plugin-root}/skills/objective/scripts/bootstrap.py
+python3 "$BOOTSTRAP" reset --base "${GID_BASE:-.}"
 
-# (2) Clear leftover per-request findings files from prior goal
-find "$B/.get-it-done/findings" -type f -name 'RQ-*.md' -delete
-
-# (3) Clear executor scratch workspace (remove stale prior-goal artifacts)
-rm -rf "$B/.get-it-done/workspace"; mkdir -p "$B/.get-it-done/workspace"
-
-# (4) Remove stale prd.md / plan-audit.md (rewritten fresh when needed)
-rm -f "$B/.get-it-done/prd.md" "$B/.get-it-done/plan_audit.md"
-
-# (5) GOAL-SCOPED reset of this goal's task worktrees + gid/T-* branches (multi-goal: NEVER
-#     wipes other goals). For a brand-new goal this is a no-op; for replace-goal it clears stale
-#     task worktrees. Back-compat (GID_BASE unset) falls back to worktree-reset-all.
+# GOAL-SCOPED reset of task worktrees + gid/T-* branches (multi-goal: NEVER wipes other goals).
+# For a brand-new goal this is a no-op; for replace-goal it clears stale task worktrees.
+# Back-compat (GID_BASE unset) falls back to worktree-reset-all.
 if [ -n "$GID_BASE" ]; then
   python3 "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py" goal-reset --base "$GID_BASE" 2>/dev/null || true
 else

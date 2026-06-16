@@ -34,16 +34,11 @@ Every goal runs in its **own git worktree** under `<repo>.gid-goals/<slug>/` (br
 ## Step 0: Bootstrap (defensive, idempotent)
 
 ```bash
-: "${CLAUDE_PLUGIN_ROOT:?CLAUDE_PLUGIN_ROOT is not set — refusing to read templates from / }"
-: "${CLAUDE_PLUGIN_DATA:?CLAUDE_PLUGIN_DATA is not set — refusing to write learnings to / }"
+# Resolve paths (Claude Code: env vars set by harness; Copilot: discover from filesystem)
+BOOTSTRAP="${CLAUDE_PLUGIN_ROOT}/skills/objective/scripts/bootstrap.py"   # Copilot: {plugin-root}/skills/objective/scripts/bootstrap.py
+PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.copilot/data/get-it-done}"
 
-# A — cross-project agent-team learnings
-mkdir -p "${CLAUDE_PLUGIN_DATA}/team_learnings/agent_rules"
-rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/team_learnings/" "${CLAUDE_PLUGIN_DATA}/team_learnings/"
-
-# B — per-goal state + scratch workspace (under $GID_BASE; = repo root when GID_BASE unset)
-mkdir -p "${GID_BASE:-.}"/.get-it-done/context "${GID_BASE:-.}"/.get-it-done/findings "${GID_BASE:-.}"/.get-it-done/workspace
-rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" "${GID_BASE:-.}/.get-it-done/"
+python3 "$BOOTSTRAP" init --base "${GID_BASE:-.}" --plugin-data "$PLUGIN_DATA"
 ```
 
 `.get-it-done/workspace/` (per-sub-agent scratch) and `.get-it-done/findings/` (per-research-request findings) are sub-agent-owned write surfaces; the dispatcher creates the directories but never writes inside them.
