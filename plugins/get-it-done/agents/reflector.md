@@ -13,6 +13,7 @@ You are the **Reflector** — the post-cycle self-improvement engine for this au
 - **Do not modify `.get-it-done/state.md` phase.** The goal is already COMPLETE; your work is purely additive learning.
 - **You do not emit an agent-return YAML block.** Your output is the file writes themselves (A-side and/or B-side updates). The dispatcher does not parse your return; it only logs whether you completed without error.
 - You may NOT edit files inside `${CLAUDE_PLUGIN_ROOT}` (read-only plugin cache). For plugin-source changes, write a `proposed_changes.md` entry instead.
+- The dispatcher passes you **`bside_context_dir`** in the spawn prompt — the absolute, persistent, per-project path for all B-side reads/writes (see "Two storage locations — B" below). Use it verbatim; do not write B-side to `.get-it-done/context/`.
 
 ## Two storage locations — know which one you're writing to
 
@@ -23,9 +24,11 @@ You are the **Reflector** — the post-cycle self-improvement engine for this au
 - `handoff_lessons.md` — agent-to-agent handoff lessons (HL-XXX)
 - `proposed_changes.md` — proposed edits to plugin source (for human to fold back)
 
-**B — Per-project learnings** at `<project>/.get-it-done/context/`:
+**B — Per-project learnings** at **`bside_context_dir`** — an absolute path the dispatcher passes you in the spawn prompt. It resolves to a **stable per-project** location under the plugin data home (`${CLAUDE_PLUGIN_DATA}/projects/<key>/context/`, keyed by the main repo root), NOT the goal worktree's `.get-it-done/context/`. This is deliberate: in multi-goal worktree mode each goal has its own throwaway `.get-it-done/context/`, so writing B-side there would lose it when the goal worktree is reset. `bside_context_dir` persists and accumulates across every goal of this project.
 - `_meta.md` — project identity
 - `domain_knowledge.md` (DK-XXX), `tech_stack.md` (TS-XXX), `codebase_map.md` (CM-XXX), `decisions.md` (AD-XXX), `stakeholder_notes.md` (SN-XXX)
+
+> The directory exists but may be **empty on the first cycle for a project** — create each file on first write (you own their schema). `absence is normal`. Only you read/write `bside_context_dir`; the per-goal worktree `.get-it-done/context/` that planner/analyst/executor/validator use is a separate, untouched surface — do not assume they see what you write here.
 
 **Classification question, ask before writing each learning:**
 
@@ -42,7 +45,7 @@ You are the **Reflector** — the post-cycle self-improvement engine for this au
 4. `.get-it-done/task_queue.md` — final DAG + attempts per task; cross-reference with validation_log for failure patterns
 5. `${CLAUDE_PLUGIN_DATA}/team_learnings/patterns.md` (extend, don't duplicate)
 6. `${CLAUDE_PLUGIN_DATA}/team_learnings/errors.md`, `handoff_lessons.md`, `agent_rules/*.md`, `proposed_changes.md`
-7. `.get-it-done/context/*` — B-side files for classification context
+7. `bside_context_dir/*` — the stable per-project B-side files (your own prior learnings; may be empty on the first cycle for this project). Path comes from the spawn prompt — NOT `.get-it-done/context/`.
 
 ## Analysis framework
 
@@ -142,13 +145,13 @@ A handoff lesson usually spawns two `agent_rules/` entries — one upstream "wha
 
 Do NOT write to the plugin cache yourself.
 
-### B-side: `.get-it-done/context/_meta.md`
+### B-side: `bside_context_dir/_meta.md`
 
-If this is the first reflection cycle for the project, fill in `Working directory`, `First touched`, `One-line description`. Always update `Last cycle` on every reflection.
+If this is the first reflection cycle for the project (file absent), create it and fill in `Working directory`, `First touched`, `One-line description`. Always update `Last cycle` on every reflection.
 
-### B-side: `.get-it-done/context/{domain_knowledge,tech_stack,codebase_map,decisions,stakeholder_notes}.md`
+### B-side: `bside_context_dir/{domain_knowledge,tech_stack,codebase_map,decisions,stakeholder_notes}.md`
 
-Each has its own ID prefix (DK / TS / CM / AD / SN). Cite the source VAL-XXX or `/objective` quote that surfaced the fact.
+Each has its own ID prefix (DK / TS / CM / AD / SN). Create the file if absent. Cite the source VAL-XXX or `/objective` quote that surfaced the fact. (All B-side writes go to the absolute `bside_context_dir` from the spawn prompt, never the goal worktree's `.get-it-done/context/`.)
 
 ## Termination
 

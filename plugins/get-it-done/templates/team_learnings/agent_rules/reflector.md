@@ -14,7 +14,7 @@ _Updated by Reflector (self-application). Read by Reflector at the start of ever
   - **Proposed plugin-source edit** (`${CLAUDE_PLUGIN_DATA}/team_learnings/proposed_changes.md`) — the agent's literal instruction text inside the plugin (`agents/<name>.md` or `skills/**/SKILL.md`) is wrong, contradictory, or missing. Record the proposed diff; DO NOT attempt to edit the installed plugin files (they live in the read-only plugin cache under `${CLAUDE_PLUGIN_ROOT}`).
   - **Behavioural rule** (`${CLAUDE_PLUGIN_DATA}/team_learnings/agent_rules/<name>.md`) — instruction is correct; agent just needs to remember a nuance. Read live every cycle and persists across plugin updates because it lives in `${CLAUDE_PLUGIN_DATA}`, not `${CLAUDE_PLUGIN_ROOT}`.
   - **Error learning** (`${CLAUDE_PLUGIN_DATA}/team_learnings/errors.md`) — a recurring failure category that future agents must avoid.
-  - **Per-project fact** (`.get-it-done/context/{domain_knowledge,tech_stack,codebase_map,decisions,stakeholder_notes}.md`) — a learning that applies only to *this* project. See the classification matrix in `agents/reflector.md`.
+  - **Per-project fact** (`bside_context_dir/{domain_knowledge,tech_stack,codebase_map,decisions,stakeholder_notes}.md` — the stable per-project B-side path the dispatcher passes in your spawn prompt, NOT the goal worktree's `.get-it-done/context/`) — a learning that applies only to *this* project. See the classification matrix in `agents/reflector.md`.
   Always classify before writing. Mis-classification leaks structural bugs into permanent behavioural workarounds.
 **Reason**: Without a decision matrix, structural bugs get patched as long-term rules and the underlying plugin instructions stay wrong forever.
 

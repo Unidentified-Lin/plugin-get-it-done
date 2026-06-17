@@ -20,6 +20,7 @@ Exit code 0 = ran cleanly (check JSON "ok"/"violations" fields for verdicts);
 exit code 2 = could not parse required files (dispatcher falls back to manual procedure).
 """
 
+import hashlib
 import json
 import os
 import re
@@ -1119,6 +1120,31 @@ def cmd_consolidate_milestone(mid):
     _consolidate(base, f"{mid}: {title}", body or f"{mid} tasks", mid)
 
 
+def cmd_bside_dir():
+    """Resolve the STABLE per-project B-side context dir under the plugin data home, so
+    Reflector's per-project learnings persist across goals/worktrees instead of being trapped
+    in (and lost with) a single goal worktree's .get-it-done/context/.
+
+    Stable key = the MAIN repo root: `git rev-parse --git-common-dir` returns the SHARED .git
+    for every worktree of the repo, so its parent dir is identical across all of a project's
+    goal worktrees. Non-git ⇒ the base/cwd path itself. Key = "<repo-basename>-<sha1(root)[:8]>"
+    (hash disambiguates same-named repos in different locations). mkdir -p's the dir and prints
+    {"ok", "path", "key"}. The dir is left EMPTY — Reflector creates the B-side files on demand
+    (it owns their schema); no templating here. Only Reflector reads/writes this location; the
+    per-goal worktree .get-it-done/context/ that other agents use is untouched."""
+    pd = _flag("--plugin-data")
+    if not pd:
+        die("bside-dir requires --plugin-data <dir>")
+    # cwd is already the goal worktree (main() chdir'd to --base when given).
+    rc, common, _ = run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"])
+    root = os.path.dirname(common) if (rc == 0 and common) else os.path.abspath(".")
+    base_name = re.sub(r"[^A-Za-z0-9._-]", "-", os.path.basename(root.rstrip("/\\"))) or "repo"
+    key = f"{base_name}-{hashlib.sha1(root.encode('utf-8')).hexdigest()[:8]}"
+    path = os.path.join(os.path.abspath(pd), "projects", key, "context")
+    os.makedirs(path, exist_ok=True)
+    print(json.dumps({"ok": True, "path": path, "key": key}, ensure_ascii=False))
+
+
 def cmd_consolidate_final():
     gs = load_git_state()
     base = gs.get("goal_base")
@@ -1172,7 +1198,7 @@ def main():
         die("usage: gid.py <state|dag-check|pool|rqs|batch-id|truncate-logs|git-preflight|goals|"
             "goal-worktree-init|goal-commit-task|goal-reset|worktree-add|worktree-commit-wip|"
             "worktree-merge|worktree-drop|worktree-gc|worktree-reset-all|check-stray-edits|"
-            "consolidate-milestone|consolidate-final>  [--base <goal-worktree>]")
+            "consolidate-milestone|consolidate-final|bside-dir>  [--base <goal-worktree>]")
     cmd = sys.argv[1]
 
     # Base switch: target a goal's worktree instead of cwd. Unset ⇒ base = cwd = repo root
@@ -1222,6 +1248,7 @@ def main():
         "worktree-gc": cmd_worktree_gc,
         "worktree-reset-all": cmd_worktree_reset_all,
         "consolidate-final": cmd_consolidate_final,
+        "bside-dir": cmd_bside_dir,
     }.get(cmd, lambda: die(f"unknown subcommand: {cmd}"))()
 
 
