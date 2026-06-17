@@ -270,9 +270,11 @@ PHASE_BRANCH_EXECUTING:
     # See task_queue.md "Derivation rule":
     #   validating  — M.Claimed_by != null
     #   pending     — any task in M.Tasks has Status != done
-    #   tasks_done  — all tasks done, no validator in flight, AND
+    #   tasks_done  — MULTI-task milestone: all tasks done, no validator in flight, AND
     #                 either no VR entries yet OR latest VR was fail without escalate_to_blocked
-    #   validated   — latest VR verdict == pass
+    #   validated   — latest VR verdict == pass, OR SINGLE-task milestone whose lone task is
+    #                 done (auto-validated — no milestone validator spawned; per-task validation
+    #                 already covered it and there is no cross-task integration to check)
     #   blocked     — latest VR escalate_to_blocked == true
     #
     # Milestone gate (downstream blocking):
@@ -286,7 +288,10 @@ PHASE_BRANCH_EXECUTING:
     FOR t IN task_queue WHERE t.Status == executed, ordered by t.Created asc:
         pool.append({ role: validator, mode: task, task_id: t.id, scratch: null })
 
-    # P2: milestone validators — any milestone whose tasks are all done but not yet validated
+    # P2: milestone validators — any milestone whose tasks are all done but not yet validated.
+    # Single-task milestones never reach `tasks_done` (they derive straight to `validated`),
+    # so they are skipped here automatically — no milestone-validator spawn for a milestone
+    # that has no cross-task integration to check.
     FOR M IN milestones WHERE milestone_status(M) == tasks_done,
                               ordered by M.id ascending:
         pool.append({ role: validator, mode: milestone, task_id: M.id, scratch: null })
@@ -500,6 +505,8 @@ For each well-formed return (BAD_RETURN items skip this and just have Claimed_by
 **Validator return (`mode: milestone`):**
 
 Milestone status is derived (see task_queue.md "Derivation rule") — the dispatcher does NOT write a `Status:` field for milestones. Instead it persists the validator's verdict in the milestone's `Validation Results` array and (where applicable) flips per-task statuses; the next read of milestone_status() will reflect those changes naturally.
+
+> **Single-task milestones never reach this branch.** They auto-validate (derive straight to `validated` once their lone task is `done`), so no milestone validator is ever spawned for them and there is nothing to persist here. Their single commit is already one commit on the goal branch, so the `consolidate-milestone` step below would be a no-op anyway.
 
 - In `## Milestones` section, **first increment** milestone `ValidatorAttempts` by 1, then append to the milestone's `Validation Results` array with `{ attempt_no: <milestone.ValidatorAttempts after increment>, verdict, fail_reasons, task_ids_to_rework, escalate_to_blocked, notes, at }`. Clear `Claimed_by`, `Claimed_at`.
 - Append `MVAL-XXX` entry to `.get-it-done/validation_log.md` (next monotonic MVAL number; dedup-key is `(milestone_id, attempt_no)`).
