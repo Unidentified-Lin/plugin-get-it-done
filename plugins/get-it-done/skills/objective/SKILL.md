@@ -135,11 +135,13 @@ else
 fi
 ```
 
-**Do NOT overwrite** (these accumulate across goals and are preserved):
+**Do NOT overwrite** (preserved when `/objective` resets / replaces a goal *in this worktree*):
 - `.get-it-done/progress_log.md` (append-only history)
 - `.get-it-done/validation_log.md` (append-only history)
 - `.get-it-done/context/*` (per-project domain/tech/codebase/decisions/stakeholder — B side)
 - everything under `${CLAUDE_PLUGIN_DATA}/team_learnings/` (A side, untouched by /objective)
+
+> **Multi-goal scope note:** in multi-goal worktree mode each goal has its **own** `.get-it-done/`, so `progress_log.md` / `validation_log.md` are **per-goal-worktree** — they are append-only *within a goal's lifetime* (across `/adjust` and across a `/objective` reset/replace of the same slug), **not** a single ledger merged across distinct goals. The only truly cross-goal, cross-project store is A-side `${CLAUDE_PLUGIN_DATA}/team_learnings/`. (B-side `context/` is slated to move to a stable per-project location so it too accumulates across goals — see project notes.)
 
 Append to `.get-it-done/progress_log.md`:
 
