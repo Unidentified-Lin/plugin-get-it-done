@@ -309,6 +309,13 @@ def milestone_status(m, tasks):
             return "pending"
     vrs = m.get("validation_results") or []
     if not vrs:
+        # Single-task milestone: the per-task validator already verified the only task and
+        # there is no cross-task integration left to check, so auto-validate — skip the
+        # (purely ceremonial) milestone-validator spawn. Its lone commit is already a single
+        # commit on the goal branch, so consolidate-milestone would be a no-op anyway.
+        # Multi-task milestones still require a milestone validator (return "tasks_done").
+        if len(m["tasks"]) <= 1:
+            return "validated"
         return "tasks_done"
     latest = vrs[-1]
     if latest.get("verdict") == "pass":

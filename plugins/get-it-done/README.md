@@ -14,7 +14,7 @@
     - executed tasks → 派 validator
     - needs_rework → 重派 executor
     - pending tasks (deps 全 done) → 派 executor
-    - 某 milestone 全 done → 派 milestone validator (Stage 3+)
+    - 某「多任務」milestone 全 done → 派 milestone validator (Stage 3+)；單任務 milestone 自動 validated，不派
   一個 batch 內可同時包含多個異質 sub-agents（最多 N 個）。
 
 收尾（dispatcher 主導）：

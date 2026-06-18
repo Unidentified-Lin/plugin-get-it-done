@@ -36,7 +36,7 @@ Every task MUST have a `Dependencies:` field — a possibly-empty list of task I
 
 Planner self-checks the DAG before handing the task_queue to the dispatcher (no cycles, no self-refs, no references to non-existent task IDs). The dispatcher also runs a defensive DAG pre-check on every tick — if violations are found it falls phase back to `PLANNING` (so Planner can fix it) and writes a `[BAD_DAG]` line to `progress_log.md`. No batch is spawned until the DAG validates.
 
-Tasks may also carry a `Milestone:` field (e.g. `M1`). When all tasks in a milestone reach `Status: done`, the dispatcher spawns one **milestone validator** to verify the milestone's overall acceptance criteria before any work in a downstream milestone is allowed to start. Milestone validators are not enabled in Stage 1 (single-track), but planner should still populate the field — it activates in Stage 3.
+Tasks may also carry a `Milestone:` field (e.g. `M1`). When all tasks in a **multi-task** milestone reach `Status: done`, the dispatcher spawns one **milestone validator** to verify the milestone's overall acceptance criteria before any work in a downstream milestone is allowed to start. A **single-task** milestone is auto-validated the moment its lone task is `done` (no milestone validator — per-task validation already covered it and there is no cross-task integration to check). Milestone validators are not enabled in Stage 1 (single-track), but planner should still populate the field — it activates in Stage 3.
 
 ## Per-task entry schema
 
@@ -119,6 +119,10 @@ def milestone_status(M):
         return "pending"
     # All tasks are done and no validator in flight.
     if not M.Validation_Results:
+        # Single-task milestone → auto-validate (skip the milestone validator). The lone task's
+        # per-task validator already passed it, and there is no cross-task integration to check.
+        if len(M.Tasks) <= 1:
+            return "validated"
         return "tasks_done"
     latest = M.Validation_Results[-1]
     if latest.verdict == "pass":
@@ -134,7 +138,9 @@ def milestone_status(M):
 Status flow (induced, not persisted):
 
 ```
-pending     → tasks_done   (every task in Tasks reaches Status: done)
+pending     → validated    (single-task milestone: its lone task reaches done — auto-validated,
+                            no milestone validator spawned)
+pending     → tasks_done   (multi-task milestone: every task in Tasks reaches Status: done)
 tasks_done  → validating   (dispatcher claims it for a milestone validator)
 validating  → validated    (milestone validator returns verdict: pass)
 validating  → tasks_done   (validator returns fail with non-empty task_ids_to_rework — those tasks

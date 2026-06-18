@@ -110,7 +110,7 @@ EXECUTING: dispatcher batch per tick
   - pending tasks (deps done) → executor
   - executed tasks → validator
   - needs_rework → re-executor
-  - milestone all done → milestone validator
+  - milestone all done → milestone validator (skipped for single-task milestones — they auto-validate)
   Batch size ≤ 5, heterogeneous agents per batch.
 
 Git isolation (git projects, multi-goal worktree model): each goal runs in its OWN
