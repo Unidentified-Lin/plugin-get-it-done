@@ -182,7 +182,7 @@ This split closes the validator-rerun edge case automatically — sub-case B nev
 - `wc -l .get-it-done/validation_log.md > 500` → same with `.get-it-done/archive/validation_log.md`, keep last 250 lines.
 - A-side patterns.md > 200 lines: defer to Reflector — do NOT auto-truncate.
 
-The archive preserves the append-only audit trail that `/objective` promises ("progress_log / validation_log accumulate across goals") while keeping the live files small. Idempotent — no edits if under the caps.
+The archive preserves the append-only audit trail *within this goal worktree* (`/objective` keeps progress_log / validation_log across a goal reset/replace and across `/adjust` — they are per-goal-worktree, not merged across distinct goals) while keeping the live files small. Idempotent — no edits if under the caps.
 
 ## Step 4: DAG pre-check
 
@@ -637,8 +637,15 @@ Reflector is NOT part of the relay. It runs once per goal, after every task reac
      "<ISO> [GOAL_COMPLETE] <goal one-liner>. <N> tasks completed across <M> milestones; first-pass rate <X>/<Y>. Key deliverables: <bullet list of .get-it-done/workspace/exec-*/ artifact paths>."
 3. Rewrite state.md YAML: phase=COMPLETE, status=WAITING, batch_id=null, batch_started_at=null, batch_ended_at=null, active_agents=[], last_updated=<ISO>. Remove the most recent `## Batch` block IFF its `next_phase == REPORTING` (it's now stale).
 4. Emit the [GOAL_COMPLETE] paragraph to the user (including the ⚠️ 人工確認清單 when step 1.5 found degraded validations). In worktree mode, report the goal branch and that the user's own branch is untouched: read `goal_branch` from git_state.json and add — "原始碼變更已累積在分支 `<goal_branch>`（<N> commits，每 milestone 一個；`git log --oneline <goal_base>..<goal_branch>`）。你的工作分支與工作目錄未被更動 —— 請自行 review / merge / 開 PR 此分支。" **Do NOT auto-merge into the user's branch.** Leave the `_goal` worktree and `gid/goal-<slug>` branch in place (only `/objective` or `/adjust hard` wipes them).
-5. Spawn reflector via Agent tool. Prompt: "Execute your reflector role per agents/reflector.md. The goal just COMPLETE'd. Analyse validation_log + progress_log + the most recent batch handoffs. Update A-side and B-side learnings per your classification matrix. Do NOT change .get-it-done/state.md phase. Do NOT emit an agent-return block — your output is the file writes themselves."
-6. Reflector returns; EXIT. Reflection failures are logged ([REFLECT_FAIL]) but do NOT roll back COMPLETE.
+5. **Reflector gate (skip for small goals).** Count the task entries (`### T-XXX:` headings) in `.get-it-done/task_queue.md`.
+   - **`task_count <= 2`** → do NOT spawn reflector. A goal this small carries too little signal to be worth an opus reflection pass (no batch-parallelization dynamics, ≤2 validation cycles, no DAG-shape evidence). Append `<ISO> [REFLECT_SKIPPED] task_count=<N> (<=2; small goal)` to progress_log.md and skip to step 6.
+   - **`task_count >= 3`** → resolve the persistent per-project B-side dir first, then spawn reflector:
+     ```bash
+     BSIDE=$(python3 "$GID_PY" bside-dir --base "${GID_BASE:-.}" --plugin-data "$PLUGIN_DATA")   # → {"ok":true,"path":...}; use .path
+     ```
+     Spawn reflector via Agent tool. Prompt: "Execute your reflector role per agents/reflector.md. The goal just COMPLETE'd. **bside_context_dir: `<BSIDE.path>`** (absolute — write/read ALL B-side learnings here, NOT .get-it-done/context/). Analyse validation_log + progress_log + the most recent batch handoffs. Update A-side and B-side learnings per your classification matrix. Do NOT change .get-it-done/state.md phase. Do NOT emit an agent-return block — your output is the file writes themselves."
+     (If `bside-dir` fails — e.g. Python/git unavailable — fall back to passing `bside_context_dir: .get-it-done/context` so reflection still runs, degraded to the old per-goal scope; append `<ISO> [BSIDE_FALLBACK] <reason>` to progress_log.md.)
+6. Reflector returns (or was skipped); EXIT. Reflection failures are logged ([REFLECT_FAIL]) but do NOT roll back COMPLETE.
 ```
 
 ## Dispatcher self-loop principle
@@ -665,6 +672,6 @@ There is no context-budget guard — if the session truly runs out of context mi
 - No direct edits to executor artifacts, analyst findings, or PRD content — those are sub-agent property.
 - No silent retry of a task whose validator returned `escalate_to_blocked: true` — that goes straight to AWAITING_HUMAN.
 - Stage 3: heterogeneous batches (mixed per-task validators, milestone validators, reworks, new executors), N≤5. Source-path collisions between parallel executors must be ruled out at planning time by PR-013 in `agent_rules/planner.md` (declare overlapping tasks as DAG-dependent).
-- No reflector invocation outside `report_and_reflect()`.
+- No reflector invocation outside `report_and_reflect()`, and no reflector at all for small goals (`task_count <= 2` → `[REFLECT_SKIPPED]`).
 
 Keep this skill thin in spirit — but recognize that the dispatcher legitimately owns more logic now than in v1, because sub-agents no longer touch shared state. If something feels like it belongs in an agent .md, ask whether moving it would re-introduce concurrent writes to shared files. If yes, it stays here.
