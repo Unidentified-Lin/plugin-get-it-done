@@ -527,7 +527,8 @@ def run_git(args, cwd=None):
     """Run a git command; return (returncode, stdout, stderr).
     stdout is rstrip'd of trailing newlines ONLY — leading whitespace is significant in
     `git status --porcelain` (the XY status column), so we must not strip the whole string."""
-    p = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True)
+    p = subprocess.run(["git"] + args, cwd=cwd, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace")
     return p.returncode, (p.stdout or "").rstrip("\r\n"), (p.stderr or "").strip()
 
 
@@ -594,7 +595,7 @@ def setup_shared_gid(wt):
         try:
             if os.name == "nt":
                 subprocess.run(["cmd", "/c", "mklink", "/J", link, root_gid],
-                               capture_output=True, text=True)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
             else:
                 os.symlink(root_gid, link)
             done.append("symlink")
@@ -663,7 +664,7 @@ def link_one(name, dst_parent):
     try:
         if os.name == "nt":
             subprocess.run(["cmd", "/c", "mklink", "/J", dst, src],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
         else:
             os.symlink(src, dst)
         return True
@@ -1163,9 +1164,11 @@ def cmd_bside_dir():
     {"ok", "path", "key"}. The dir is left EMPTY — Reflector creates the B-side files on demand
     (it owns their schema); no templating here. Only Reflector reads/writes this location; the
     per-goal worktree .get-it-done/context/ that other agents use is untouched."""
-    pd = _flag("--plugin-data")
+    pd = (_flag("--plugin-data")
+          or os.environ.get("CLAUDE_PLUGIN_DATA")
+          or os.environ.get("GID_PLUGIN_DATA"))
     if not pd:
-        die("bside-dir requires --plugin-data <dir>")
+        die("bside-dir requires --plugin-data <dir> (or set CLAUDE_PLUGIN_DATA / GID_PLUGIN_DATA env var)")
     # cwd is already the goal worktree (main() chdir'd to --base when given).
     rc, common, _ = run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"])
     root = os.path.dirname(common) if (rc == 0 and common) else os.path.abspath(".")
