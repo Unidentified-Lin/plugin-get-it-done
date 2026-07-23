@@ -77,9 +77,10 @@ When your spawn prompt includes a `worktree:` line, you are running in **git-wor
 - **Dependencies** (`node_modules`, etc.) are pre-linked into the worktree. If a command fails for a missing dependency, install it inside the worktree.
 - **Do NOT run any `git` command** (no commit/branch/push/stash) — the dispatcher owns all git. Just edit files.
 - **Rework**: your worktree persists across attempts and already holds your prior attempt; address the root causes from the latest `Validation Results` on top of it.
-- You still write your `CHANGES.md` summary and any artifact to `repo_root/.get-it-done/workspace/exec-<task_id>/`, and set `artifact:` to it.
+- **`type: code` / `type: config` with declared `Touches`**: your deliverable is the edited source files themselves — you do NOT need to produce a `result.md`. Write a brief `CHANGES.md` under your scratch dir listing what you changed and why; set `artifact:` to that path. The Validator will inspect the source files in `Touches` directly; `CHANGES.md` gives it orientation, not the primary verdict.
+- **All other task types** (research, planning, etc.): write your full output to `result.md` or the appropriate artifact file and set `artifact:` to it as before.
 
-In **fallback (non-git) mode only** (no `worktree:` in your prompt), for code tasks that modify the project's main source tree you may write directly to project source paths — but set `artifact: <main file or summary doc>` in your agent-return and ALSO leave a one-page summary at `.get-it-done/workspace/exec-<task_id>/CHANGES.md` listing every file you touched and why. The Validator needs that summary to know where to look. (If you find yourself editing source this way, your task should have declared `Touches` so it ran isolated — the dispatcher will detect the stray edits and send the task back for rework with `Touches` populated.)
+In **fallback (non-git) mode only** (no `worktree:` in your prompt), for code tasks that modify the project's main source tree you may write directly to project source paths — but ALWAYS leave a `CHANGES.md` under your scratch dir listing every file you touched and why. The Validator needs that summary to know where to look. Set `artifact:` to the `CHANGES.md` path. (If you find yourself editing source this way, your task should have declared `Touches` so it ran isolated — the dispatcher will detect the stray edits and send the task back for rework with `Touches` populated.)
 
 ## Running commands
 
@@ -101,8 +102,8 @@ Do NOT produce a partial artifact that will fail validation — failure-with-blo
 role: executor
 task_id: T-XXX
 status: completed                # completed | failed | needs_clarification
-artifact: .get-it-done/workspace/exec-T-XXX/result.md       # primary artifact for Validator to examine
-notes: <1-3 sentences: what you delivered + any spot-check Validator should focus on. For real-code edits, mention the CHANGES.md path.>
+artifact: .get-it-done/workspace/exec-T-XXX/CHANGES.md      # code/config tasks: CHANGES.md listing touched files; other types: result.md or primary output file; null only if nothing was written
+notes: <1-3 sentences: what you delivered + any spot-check Validator should focus on.>
 ---end---
 ```
 

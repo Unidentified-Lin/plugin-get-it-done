@@ -188,6 +188,7 @@ def parse_task_queue(text):
             continue
         if re.match(r"^##\s", ln):
             flush_vr()
+            in_milestones = False
             cur = None
             continue
         if cur is None:
@@ -526,7 +527,8 @@ def run_git(args, cwd=None):
     """Run a git command; return (returncode, stdout, stderr).
     stdout is rstrip'd of trailing newlines ONLY — leading whitespace is significant in
     `git status --porcelain` (the XY status column), so we must not strip the whole string."""
-    p = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True)
+    p = subprocess.run(["git"] + args, cwd=cwd, capture_output=True,
+                       text=True, encoding="utf-8", errors="replace")
     return p.returncode, (p.stdout or "").rstrip("\r\n"), (p.stderr or "").strip()
 
 
@@ -593,7 +595,7 @@ def setup_shared_gid(wt):
         try:
             if os.name == "nt":
                 subprocess.run(["cmd", "/c", "mklink", "/J", link, root_gid],
-                               capture_output=True, text=True)
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
             else:
                 os.symlink(root_gid, link)
             done.append("symlink")
@@ -628,6 +630,24 @@ def setup_shared_gid(wt):
     return done
 
 
+def _unlink_gid_junction(wt):
+    """Remove the .get-it-done junction/symlink inside a task worktree BEFORE calling
+    `git worktree remove`. On Windows, git may traverse a junction and delete the target's
+    real content rather than just unlinking the junction entry, causing data loss in the
+    goal worktree's .get-it-done/. os.rmdir() on a Windows junction removes only the
+    junction itself; os.unlink() handles POSIX symlinks."""
+    link = os.path.join(wt, GID_DIR)
+    if not os.path.lexists(link):
+        return
+    try:
+        if os.path.islink(link):
+            os.unlink(link)
+        elif os.name == "nt":
+            os.rmdir(link)
+    except OSError:
+        pass
+
+
 def load_tasks():
     txt = read(os.path.join(GID_DIR, "task_queue.md"))
     if txt is None:
@@ -644,7 +664,7 @@ def link_one(name, dst_parent):
     try:
         if os.name == "nt":
             subprocess.run(["cmd", "/c", "mklink", "/J", dst, src],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
         else:
             os.symlink(src, dst)
         return True
@@ -927,6 +947,7 @@ def cmd_worktree_merge(tid):
     if M and M not in gs["milestone_bases"]:
         gs["milestone_bases"][M] = pre_head          # goal_base stays the user's HEAD (set at init)
     if os.path.isdir(wt):
+        _unlink_gid_junction(wt)
         run_git(["worktree", "remove", "--force", wt])
     run_git(["worktree", "prune"])
     run_git(["branch", "-D", branch])
@@ -939,6 +960,7 @@ def cmd_worktree_drop(tid, keep_branch):
     gs = load_git_state()
     wt, branch = wt_path(tid), wt_branch(tid)
     if os.path.isdir(wt):
+        _unlink_gid_junction(wt)
         run_git(["worktree", "remove", "--force", wt])
     run_git(["worktree", "prune"])
     if not keep_branch:
@@ -967,6 +989,7 @@ def cmd_worktree_gc():
             continue
         p = wt_path(tid)
         if os.path.isdir(p):
+            _unlink_gid_junction(p)
             run_git(["worktree", "remove", "--force", p])
         if tasks.get(tid, {}).get("status") != "blocked":
             run_git(["branch", "-D", wt_branch(tid)])
@@ -997,6 +1020,7 @@ def cmd_goal_reset():
             # this goal's task worktrees: dir <slug>-<tid> on branch gid/<slug>-<tid>.
             if (os.path.dirname(ap) == parent and os.path.basename(ap).startswith(prefix)
                     and br.startswith("gid/" + prefix)):
+                _unlink_gid_junction(p)
                 run_git(["worktree", "remove", "--force", p])
                 run_git(["branch", "-D", br])
                 removed.append(os.path.basename(ap))
@@ -1031,6 +1055,7 @@ def cmd_worktree_reset_all():
         if line.startswith("worktree "):
             p = line[len("worktree "):].strip()
             if os.path.abspath(p).startswith(wt_abs):
+                _unlink_gid_junction(p)
                 run_git(["worktree", "remove", "--force", p])
     run_git(["worktree", "prune"])
     # Only the plugin's own branches — gid/goal-* (the goal worktree) and gid/T-* (task
@@ -1139,9 +1164,11 @@ def cmd_bside_dir():
     {"ok", "path", "key"}. The dir is left EMPTY — Reflector creates the B-side files on demand
     (it owns their schema); no templating here. Only Reflector reads/writes this location; the
     per-goal worktree .get-it-done/context/ that other agents use is untouched."""
-    pd = _flag("--plugin-data")
+    pd = (_flag("--plugin-data")
+          or os.environ.get("CLAUDE_PLUGIN_DATA")
+          or os.environ.get("GID_PLUGIN_DATA"))
     if not pd:
-        die("bside-dir requires --plugin-data <dir>")
+        die("bside-dir requires --plugin-data <dir> (or set CLAUDE_PLUGIN_DATA / GID_PLUGIN_DATA env var)")
     # cwd is already the goal worktree (main() chdir'd to --base when given).
     rc, common, _ = run_git(["rev-parse", "--path-format=absolute", "--git-common-dir"])
     root = os.path.dirname(common) if (rc == 0 and common) else os.path.abspath(".")

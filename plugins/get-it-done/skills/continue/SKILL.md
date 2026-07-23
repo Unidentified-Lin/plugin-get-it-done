@@ -441,6 +441,15 @@ Use `subagent_type: get-it-done:<role>` (namespaced form to avoid any bare-name 
 
 **Worktree-mode source items** (executor or task-validator for a source-touching task in `worktree` git_mode): set `worktree` to the path from Step 6 — the **goal worktree** (`$GID_BASE`) when this task runs sequentially, or its **task worktree** (`<repo>.gid-goals/<slug>-<T>`) in parallel mode. The executor and its validator for the same task always get the SAME worktree. Include the `repo_root` (= `$GID_BASE`) + `worktree` lines above, and add this instruction: "Make all source-code edits and run all build/test commands inside `worktree` (cwd there). When `worktree` is a task worktree, its `.get-it-done/` is a **symlink to the goal worktree's `.get-it-done/`** (`$GID_BASE/.get-it-done/`); when `worktree` IS the goal worktree, its `.get-it-done/` is right there. Either way read/write all get-it-done state and your scratch dir through `repo_root/.get-it-done/...`. Do NOT run any git command; the dispatcher owns git." Milestone-mode validators run on the goal worktree (`$GID_BASE`, whose branch holds the merged source); all non-source items omit both lines.
 
+**Code/config task validators**: Base your verdict on direct source file inspection of the paths listed in the task's `Touches` field. A `result.md` scratch artifact is not required — the edited source files are the ground truth. If the dispatcher provides a `build_test_output:` field below, treat it as primary build/test evidence (first-hand result executed by the dispatcher); if absent, note the gap as `INDIRECT_EVIDENCE: BUILD_UNAVAILABLE` (not `DEGRADED:`) — this is a structural platform limitation, not an anomaly.
+
+**When spawning a task-validator for a `type: code` or `type: infra` task** and the validator sub-agent does not have shell/build access (e.g. Copilot CLI, read-only agent contexts): run the relevant build/test commands yourself first, then include the output in the spawn prompt as a dedicated block:
+```
+build_test_output: |
+  <full stdout/stderr of the build or test run, including exit code>
+```
+This is a **mandatory** step whenever the validator cannot run build tools directly — omitting it forces the validator to fall back to `INDIRECT_EVIDENCE:` and mark every code task as unverifiable.
+
 The dispatcher waits for ALL items to return before proceeding to Step 8. There is no per-item early collection — Claude Code returns all parallel Task results together when the slowest one finishes.
 
 ## Step 8: Parse every agent-return in the batch
@@ -484,7 +493,7 @@ For each well-formed return (BAD_RETURN items skip this and just have Claimed_by
 - Set task `Artifact: <return.artifact>` (or null if return.status != completed).
 - Increment `Attempts` by 1.
 - Clear `Claimed_by`, `Claimed_at`.
-- Set `Status: executed` if return.status == completed and return.artifact present.
+- Set `Status: executed` if return.status == completed and (return.artifact present OR task `type` is `code`/`config` — these tasks edit source files directly; their deliverable is the changed files listed in `Touches`, not a scratch `result.md`. Artifact may be null for code/config tasks without penalising the status transition).
 - Set `Status: blocked` if return.status == failed (executor cannot complete) — also append `[BLOCKER] T-XXX: <notes>` to progress_log.md. **In worktree mode**, `python3 "$GID_PY" worktree-drop T-XXX --keep-branch` (remove the worktree, keep `gid/T-XXX` for forensics).
 - Append `<ISO> [EXEC_DONE] T-XXX attempt=N artifact=<path> status=<status>` to progress_log.md.
 - **Git (worktree mode), when Status became `executed`:**
@@ -621,10 +630,17 @@ Reflector is NOT part of the relay. It runs once per goal, after every task reac
 
 ```
 1. Read .get-it-done/goal.md, .get-it-done/task_queue.md, last ~20 entries of .get-it-done/validation_log.md.
-1.5 Degraded-validation sweep: grep .get-it-done/validation_log.md for "DEGRADED:" among
-    entries belonging to this goal (since the latest [NEW_GOAL]/[GOAL_REFINED]; validators
-    write e.g. "DEGRADED: BROWSER_UNAVAILABLE — ..." in their notes when they had to fall
-    back from the full verification protocol). IF any found:
+1.5 Degraded-validation sweep: grep .get-it-done/validation_log.md for "DEGRADED:" and
+    "INDIRECT_EVIDENCE:" among entries belonging to this goal (since the latest [NEW_GOAL]/[GOAL_REFINED]).
+    Two distinct markers — treat them differently:
+    - `INDIRECT_EVIDENCE:` — structural platform limitation (e.g. validator had no shell/build
+      access and used dispatcher-provided output or source inspection as a proxy). Expected
+      in code/config tasks when the agent runtime lacks shell tools. Does NOT require human
+      manual verification — the dispatcher already provided the evidence. Do NOT include in
+      the ⚠️ 人工確認清單.
+    - `DEGRADED:` — unexpected inability to verify (e.g. browser unavailable for a UI test,
+      external API unreachable for an integration test). Requires human follow-up. IF any
+      `DEGRADED:` entries found:
       - append "<ISO> [DEGRADED_VALIDATION] <task IDs + reasons>" to progress_log.md
       - the [GOAL_COMPLETE] message MUST include a prominent "⚠️ 人工確認清單" section
         listing each degraded task ID, the reason, and what the human should manually verify.
