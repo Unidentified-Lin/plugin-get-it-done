@@ -628,6 +628,24 @@ def setup_shared_gid(wt):
     return done
 
 
+def _unlink_gid_junction(wt):
+    """Remove the .get-it-done junction/symlink inside a task worktree BEFORE calling
+    `git worktree remove`. On Windows, git may traverse a junction and delete the target's
+    real content rather than just unlinking the junction entry, causing data loss in the
+    goal worktree's .get-it-done/. os.rmdir() on a Windows junction removes only the
+    junction itself; os.unlink() handles POSIX symlinks."""
+    link = os.path.join(wt, GID_DIR)
+    if not os.path.lexists(link):
+        return
+    try:
+        if os.path.islink(link):
+            os.unlink(link)
+        elif os.name == "nt":
+            os.rmdir(link)
+    except OSError:
+        pass
+
+
 def load_tasks():
     txt = read(os.path.join(GID_DIR, "task_queue.md"))
     if txt is None:
@@ -927,6 +945,7 @@ def cmd_worktree_merge(tid):
     if M and M not in gs["milestone_bases"]:
         gs["milestone_bases"][M] = pre_head          # goal_base stays the user's HEAD (set at init)
     if os.path.isdir(wt):
+        _unlink_gid_junction(wt)
         run_git(["worktree", "remove", "--force", wt])
     run_git(["worktree", "prune"])
     run_git(["branch", "-D", branch])
@@ -939,6 +958,7 @@ def cmd_worktree_drop(tid, keep_branch):
     gs = load_git_state()
     wt, branch = wt_path(tid), wt_branch(tid)
     if os.path.isdir(wt):
+        _unlink_gid_junction(wt)
         run_git(["worktree", "remove", "--force", wt])
     run_git(["worktree", "prune"])
     if not keep_branch:
@@ -967,6 +987,7 @@ def cmd_worktree_gc():
             continue
         p = wt_path(tid)
         if os.path.isdir(p):
+            _unlink_gid_junction(p)
             run_git(["worktree", "remove", "--force", p])
         if tasks.get(tid, {}).get("status") != "blocked":
             run_git(["branch", "-D", wt_branch(tid)])
@@ -997,6 +1018,7 @@ def cmd_goal_reset():
             # this goal's task worktrees: dir <slug>-<tid> on branch gid/<slug>-<tid>.
             if (os.path.dirname(ap) == parent and os.path.basename(ap).startswith(prefix)
                     and br.startswith("gid/" + prefix)):
+                _unlink_gid_junction(p)
                 run_git(["worktree", "remove", "--force", p])
                 run_git(["branch", "-D", br])
                 removed.append(os.path.basename(ap))
@@ -1031,6 +1053,7 @@ def cmd_worktree_reset_all():
         if line.startswith("worktree "):
             p = line[len("worktree "):].strip()
             if os.path.abspath(p).startswith(wt_abs):
+                _unlink_gid_junction(p)
                 run_git(["worktree", "remove", "--force", p])
     run_git(["worktree", "prune"])
     # Only the plugin's own branches — gid/goal-* (the goal worktree) and gid/T-* (task
