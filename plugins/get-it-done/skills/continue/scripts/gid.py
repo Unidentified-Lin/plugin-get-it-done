@@ -188,6 +188,7 @@ def parse_task_queue(text):
             continue
         if re.match(r"^##\s", ln):
             flush_vr()
+            in_milestones = False
             cur = None
             continue
         if cur is None:
