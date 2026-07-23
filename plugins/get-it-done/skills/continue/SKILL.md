@@ -177,12 +177,7 @@ This split closes the validator-rerun edge case automatically — sub-case B nev
 
 **Script path**: `python3 "$GID_PY" truncate-logs` — archives trimmed lines to `.get-it-done/archive/<logname>.md` (append) before truncating, and appends the `[TRUNCATE]` marker itself. Done.
 
-**Manual fallback**:
-- `wc -l .get-it-done/progress_log.md > 400` → append all but the last 200 lines to `.get-it-done/archive/progress_log.md`, keep last 200 lines; append `<ISO> [TRUNCATE] progress_log.md from N to 200 (archived)`.
-- `wc -l .get-it-done/validation_log.md > 500` → same with `.get-it-done/archive/validation_log.md`, keep last 250 lines.
-- A-side patterns.md > 200 lines: defer to Reflector — do NOT auto-truncate.
-
-The archive preserves the append-only audit trail *within this goal worktree* (`/objective` keeps progress_log / validation_log across a goal reset/replace and across `/adjust` — they are per-goal-worktree, not merged across distinct goals) while keeping the live files small. Idempotent — no edits if under the caps.
+**Manual fallback**: script unavailable → Read `references/manual-fallback.md` §"Step 3 fallback" and follow it. Log `[GID_FALLBACK]` per Step 0.5.
 
 ## Step 4: DAG pre-check
 
@@ -193,24 +188,7 @@ If `phase ∈ {EXECUTING, REPORTING}` AND `.get-it-done/task_queue.md` has any t
 - `warnings` non-empty (e.g. `touches-overlap`) → append `<ISO> [DAG_WARN] <warning>` lines to progress_log.md but DO NOT block — the runtime collision check in Step 5 already defers overlapping executors.
 - `ok: true` → proceed.
 
-**Manual fallback**:
-
-```
-all_ids := every "### <ID>:" heading in task_queue.md
-FOR EACH task t:
-    FOR EACH dep IN t.Dependencies:
-        IF dep == t.id → DAG_VIOLATION (self-ref)
-        IF dep NOT IN all_ids → DAG_VIOLATION (orphan)
-# Cycle check: classic DFS / topo-sort over (task → its deps).
-IF any cycle → DAG_VIOLATION
-
-IF any violation:
-    append to progress_log.md: "<ISO> [BAD_DAG] <one-line description>"
-    set state.phase = PLANNING; status = WAITING
-    EXIT — planner will re-run on next /continue
-```
-
-This is defensive; planner self-audit should catch this first, but the dispatcher is the last gate.
+**Manual fallback**: script unavailable → Read `references/manual-fallback.md` §"Step 4 fallback" and follow it. This is defensive; planner self-audit should catch this first, but the dispatcher is the last gate.
 
 ## Step 5: Pick the actionable batch (Stage 3: heterogeneous, up to N work items)
 
@@ -225,138 +203,7 @@ This is defensive; planner self-audit should catch this first, but the dispatche
 
 Milestone ordering is **numeric** on the integer after `M` (`M2 < M10`); never compare milestone IDs as plain strings. The script already does this.
 
-**Manual fallback**:
-
-```
-N_MAX := 5                              # hard cap; do not raise
-
-PHASE_BRANCH_PLANNING:
-    IF phase == IDLE:
-        EXIT with "沒有活躍目標 — 使用 /objective <goal> 設定目標"
-    IF phase == AWAITING_HUMAN:
-        EXIT with the most recent [BLOCKER] / [BAD_DAG] / [BAD_MILESTONE] / blocked-task summary from progress_log.md.
-        Append the hint: "若要修訂目標或補充需求，使用 /adjust <修訂訊息>。"
-    IF phase == COMPLETE:
-        EXIT cleanly
-    IF phase == REPORTING:
-        run report_and_reflect(); EXIT
-
-    IF phase == PLANNING:
-        batch := [{ role: planner, task_id: null, scratch: null }]      # singleton
-        GOTO step 6
-
-    IF phase == ANALYZING:
-        # Stage 4: parallel analysts, one per open RQ, up to N_MAX.
-        # PR-012 guarantees the open RQs are independent of each other (planner enforces).
-        open_rqs := every entry in .get-it-done/research_requests.md with Status: open AND Claimed_by == null,
-                    ordered by RQ-id ascending
-        IF open_rqs is empty:
-            # Two sub-cases:
-            #   (a) some RQs are open AND Claimed_by != null → in flight, not picked here;
-            #       should have been caught by Step 2 crash check. If we get here with
-            #       claimed-but-not-in-flight RQs, treat as crash.
-            #   (b) every RQ has Status: fulfilled → research round complete; back to PLANNING.
-            stale_claimed := every RQ with Status: open AND Claimed_by != null
-            IF stale_claimed non-empty:
-                re-enter step 2 logic
-            set phase = PLANNING; GOTO step 2 (continue this invocation — next tick spawns planner)
-        batch := []
-        FOR rq IN open_rqs[: N_MAX]:
-            batch.append({ role: analyst, task_id: rq.RQ-id, scratch: null })
-        GOTO step 6
-
-PHASE_BRANCH_EXECUTING:
-    # Milestone status is DERIVED on every tick (no persisted Status: field on milestones).
-    # See task_queue.md "Derivation rule":
-    #   validating  — M.Claimed_by != null
-    #   pending     — any task in M.Tasks has Status != done
-    #   tasks_done  — MULTI-task milestone: all tasks done, no validator in flight, AND
-    #                 either no VR entries yet OR latest VR was fail without escalate_to_blocked
-    #   validated   — latest VR verdict == pass, OR SINGLE-task milestone whose lone task is
-    #                 done (auto-validated — no milestone validator spawned; per-task validation
-    #                 already covered it and there is no cross-task integration to check)
-    #   blocked     — latest VR escalate_to_blocked == true
-    #
-    # Milestone gate (downstream blocking):
-    #   active_ms := lowest M_k where milestone_status(M_k) != validated
-    #               ("lowest" = numeric compare on the integer after M: M2 < M10)
-    #   A task whose Milestone > active_ms cannot start until active_ms reaches `validated`.
-
-    pool := []                          # heterogeneous — order = priority
-
-    # P1: per-task validators — drain `executed` (frees downstream pending tasks fastest)
-    FOR t IN task_queue WHERE t.Status == executed, ordered by t.Created asc:
-        pool.append({ role: validator, mode: task, task_id: t.id, scratch: null })
-
-    # P2: milestone validators — any milestone whose tasks are all done but not yet validated.
-    # Single-task milestones never reach `tasks_done` (they derive straight to `validated`),
-    # so they are skipped here automatically — no milestone-validator spawn for a milestone
-    # that has no cross-task integration to check.
-    FOR M IN milestones WHERE milestone_status(M) == tasks_done,
-                              ordered by M.id ascending:
-        pool.append({ role: validator, mode: milestone, task_id: M.id, scratch: null })
-
-    # P3 & P4: Executors (rework and new) — collision-aware [FIX N2: unified collision detection]
-    # Pre-declare collision-tracking set (includes validators but only source-touching executors need check)
-    source_touching_executors := []     # {task_id, Touches} of all executors already in pool
-    
-    # P3: rework executors — oldest first (converge stalled loops)
-    FOR t IN task_queue WHERE t.Status == needs_rework, ordered by t.Created asc:
-        # Collision check: rework executors must also respect Touches
-        IF t.Touches exists AND non-empty:
-            collides_with := null
-            FOR already IN source_touching_executors:
-                IF t.Touches ∩ already.Touches is non-empty:
-                    collides_with = already.task_id
-                    break
-            IF collides_with != null:
-                # Defer to next batch
-                append "<ISO> [DEFER] T-<t.id> rework deferred (touches conflict with T-<collides_with>)" to progress_log.md
-                continue (skip)
-        
-        pool.append({ role: executor, task_id: t.id,
-                      scratch: ".get-it-done/workspace/exec-" + t.id + "/" })
-        IF t.Touches exists AND non-empty:
-            source_touching_executors.append({ task_id: t.id, Touches: t.Touches })
-
-    # P4: new executors — pending tasks whose deps are all `done` AND whose milestone == active_ms
-    FOR t IN task_queue WHERE t.Status == pending
-                          AND every dep in t.Dependencies has Status: done
-                          AND t.Milestone == active_ms,
-                          ordered by (Priority desc, Created asc):
-        # Collision check: verify t.Touches doesn't overlap with any already-claimed executor
-        IF t.Touches exists AND non-empty:
-            collides_with := null
-            FOR already IN source_touching_executors:
-                IF t.Touches ∩ already.Touches is non-empty:
-                    collides_with = already.task_id
-                    break
-            IF collides_with != null:
-                # Defer to next batch
-                append "<ISO> [DEFER] T-<t.id> deferred (touches conflict with T-<collides_with>)" to progress_log.md
-                continue (skip)
-        
-        pool.append({ role: executor, task_id: t.id,
-                      scratch: ".get-it-done/workspace/exec-" + t.id + "/" })
-        IF t.Touches exists AND non-empty:
-            source_touching_executors.append({ task_id: t.id, Touches: t.Touches })
-
-    IF pool is empty:
-        # No work left — terminal checks.
-        IF every task has Status: done AND every milestone has milestone_status == validated:
-            set phase = REPORTING; run report_and_reflect(); EXIT
-        IF any task has Status: blocked:
-            set phase = AWAITING_HUMAN; EXIT with the blocked-task summary
-        IF any task has Status: claimed OR validating:
-            re-enter step 2 logic                       # stale claim — treat as crash
-        # Otherwise: deps / milestone gate unsatisfied with nothing in flight = deadlock
-        set phase = AWAITING_HUMAN; append "<ISO> [BLOCKER] dependency_or_milestone_deadlock" to progress_log.md; EXIT
-
-    # Heterogeneous slice: take first min(N_MAX, len(pool)) entries.
-    # A single batch can now mix per-task validators, milestone validators, reworks, and new executors.
-    batch := first min(N_MAX, len(pool)) entries of pool
-    GOTO step 6
-```
+**Manual fallback**: script unavailable → Read `references/manual-fallback.md` §"Step 5 fallback" and follow it in full (covers both the PLANNING/ANALYZING branch and the EXECUTING priority pool P1–P4).
 
 ### Heterogeneous batch — what's safe and what isn't
 
@@ -373,7 +220,7 @@ Order within the pool is **priority**, not arbitrary — validators come first s
 
 ## Step 6: Atomic pre-write (state + claim every task in the batch)
 
-Generate the next `batch_id`: `python3 "$GID_PY" batch-id` (monotonic over `## Batch` history + current `batch_id`). Manual fallback: read the highest existing `## Batch` block in state.md and increment; if none, start at `B0001`.
+Generate the next `batch_id`: `python3 "$GID_PY" batch-id` (monotonic over `## Batch` history + current `batch_id`). Manual fallback: Read `references/manual-fallback.md` §"Step 6 fallback".
 
 ```
 Rewrite state.md YAML block (preserving everything below the block):
@@ -437,7 +284,7 @@ The dispatcher persists shared state based on your agent-return.
 
 Use `subagent_type: get-it-done:<role>` (namespaced form to avoid any bare-name collision with other plugins or user-registered roles).
 
-**Platform note — sub-agents MUST run isolated, not inline** (see `platform-adapter.md` Section 4). On Claude Code the `Agent` tool guarantees this. On **GitHub Copilot CLI**, delegate to the discoverable custom agent **by name** (e.g. `get-it-done-executor`) and instruct it to run in its own context and return only its `---agent-return---` block — otherwise Copilot runs the work inline and breaks the relay. If Copilot does not run delegations concurrently, spawn fewer at once (down to one-at-a-time); flow control is unaffected.
+**Platform note — sub-agents MUST run isolated, not inline.** Read `../../references/platform-adapter.md` §4 for the full cross-platform spawn procedure (Claude Code `Agent` tool vs. Copilot by-name delegation) before spawning if you have not already loaded it this session.
 
 **Worktree-mode source items** (executor or task-validator for a source-touching task in `worktree` git_mode): set `worktree` to the path from Step 6 — the **goal worktree** (`$GID_BASE`) when this task runs sequentially, or its **task worktree** (`<repo>.gid-goals/<slug>-<T>`) in parallel mode. The executor and its validator for the same task always get the SAME worktree. Include the `repo_root` (= `$GID_BASE`) + `worktree` lines above, and add this instruction: "Make all source-code edits and run all build/test commands inside `worktree` (cwd there). When `worktree` is a task worktree, its `.get-it-done/` is a **symlink to the goal worktree's `.get-it-done/`** (`$GID_BASE/.get-it-done/`); when `worktree` IS the goal worktree, its `.get-it-done/` is right there. Either way read/write all get-it-done state and your scratch dir through `repo_root/.get-it-done/...`. Do NOT run any git command; the dispatcher owns git." Milestone-mode validators run on the goal worktree (`$GID_BASE`, whose branch holds the merged source); all non-source items omit both lines.
 
@@ -541,33 +388,7 @@ Milestone status is derived (see task_queue.md "Derivation rule") — the dispat
   - `REPORTING`: rare — only when planner determines the goal is already satisfied; set `phase = REPORTING`.
 - Append `<ISO> [PLAN_DONE] next=<next_phase_request>` to progress_log.md.
 
-**Plan audit gate (quality check before EXECUTING):**
-
-The autonomous path has no human plan review — this gate is its substitute. It catches the most expensive failure mode (a whole goal executed against vague or unverifiable criteria) for the cost of one extra spawn.
-
-```
-audit_fails := count of [PLAN_AUDIT_FAIL] lines in progress_log.md SINCE the latest
-               [NEW_GOAL] or [GOAL_REFINED] line (current goal only)
-IF audit_fails >= 2:
-    # Avoid planner↔reviewer ping-pong; two strikes and we proceed with a warning.
-    append "<ISO> [PLAN_AUDIT_SKIPPED] max audit rounds reached; proceeding to EXECUTING"
-    rm -f .get-it-done/plan_audit.md
-    set phase = EXECUTING
-ELSE:
-    spawn get-it-done:plan-reviewer (single Agent call, NOT a batch member) with mode `queue-audit`
-    and absolute paths to: .get-it-done/task_queue.md, .get-it-done/metrics.md,
-    .get-it-done/goal.md, .get-it-done/prd.md (if it exists).
-    Parse its ---agent-return--- block (role: plan-reviewer, verdict: pass|fail, fail_reasons).
-    IF verdict == pass (or the return is malformed — the gate must not deadlock the pipeline):
-        append "<ISO> [PLAN_AUDIT_PASS]" (or "[PLAN_AUDIT_PASS] (malformed return — waved through)")
-        rm -f .get-it-done/plan_audit.md
-        set phase = EXECUTING
-    IF verdict == fail:
-        write the full fail_reasons list to .get-it-done/plan_audit.md (dispatcher-owned file;
-        overwrite). Append "<ISO> [PLAN_AUDIT_FAIL] <one-line summary>".
-        keep phase = PLANNING — next tick re-spawns planner, which reads plan_audit.md
-        (listed in its inputs) and MUST address every issue before re-emitting EXECUTING.
-```
+**Plan audit gate (quality check before EXECUTING):** Read `references/plan-audit-gate.md` and execute it in full before flipping phase to EXECUTING.
 
 ## Step 10: Close the batch
 
@@ -626,43 +447,7 @@ Decision tree (checked in order):
 
 ## `report_and_reflect()` — runs once when the goal closes
 
-Reflector is NOT part of the relay. It runs once per goal, after every task reaches `Status: done`.
-
-```
-1. Read .get-it-done/goal.md, .get-it-done/task_queue.md, last ~20 entries of .get-it-done/validation_log.md.
-1.5 Degraded-validation sweep: grep .get-it-done/validation_log.md for "DEGRADED:" and
-    "INDIRECT_EVIDENCE:" among entries belonging to this goal (since the latest [NEW_GOAL]/[GOAL_REFINED]).
-    Two distinct markers — treat them differently:
-    - `INDIRECT_EVIDENCE:` — structural platform limitation (e.g. validator had no shell/build
-      access and used dispatcher-provided output or source inspection as a proxy). Expected
-      in code/config tasks when the agent runtime lacks shell tools. Does NOT require human
-      manual verification — the dispatcher already provided the evidence. Do NOT include in
-      the ⚠️ 人工確認清單.
-    - `DEGRADED:` — unexpected inability to verify (e.g. browser unavailable for a UI test,
-      external API unreachable for an integration test). Requires human follow-up. IF any
-      `DEGRADED:` entries found:
-      - append "<ISO> [DEGRADED_VALIDATION] <task IDs + reasons>" to progress_log.md
-      - the [GOAL_COMPLETE] message MUST include a prominent "⚠️ 人工確認清單" section
-        listing each degraded task ID, the reason, and what the human should manually verify.
-        The goal still closes — but the user must not discover the gap by accident.
-1.6 Final commit consolidation (worktree mode): IF git_state.json `commit_granularity == goal`,
-    run `python3 "$GID_PY" consolidate-final` (collapses every milestone commit into one; skips
-    cleanly if already a single commit or the branch is pushed). For the default `milestone`
-    granularity, history is already one-commit-per-milestone from Step 9 — no action.
-2. Append to .get-it-done/progress_log.md:
-     "<ISO> [GOAL_COMPLETE] <goal one-liner>. <N> tasks completed across <M> milestones; first-pass rate <X>/<Y>. Key deliverables: <bullet list of .get-it-done/workspace/exec-*/ artifact paths>."
-3. Rewrite state.md YAML: phase=COMPLETE, status=WAITING, batch_id=null, batch_started_at=null, batch_ended_at=null, active_agents=[], last_updated=<ISO>. Remove the most recent `## Batch` block IFF its `next_phase == REPORTING` (it's now stale).
-4. Emit the [GOAL_COMPLETE] paragraph to the user (including the ⚠️ 人工確認清單 when step 1.5 found degraded validations). In worktree mode, report the goal branch and that the user's own branch is untouched: read `goal_branch` from git_state.json and add — "原始碼變更已累積在分支 `<goal_branch>`（<N> commits，每 milestone 一個；`git log --oneline <goal_base>..<goal_branch>`）。你的工作分支與工作目錄未被更動 —— 請自行 review / merge / 開 PR 此分支。" **Do NOT auto-merge into the user's branch.** Leave the `_goal` worktree and `gid/goal-<slug>` branch in place (only `/objective` or `/adjust hard` wipes them).
-5. **Reflector gate (skip for small goals).** Count the task entries (`### T-XXX:` headings) in `.get-it-done/task_queue.md`.
-   - **`task_count <= 2`** → do NOT spawn reflector. A goal this small carries too little signal to be worth an opus reflection pass (no batch-parallelization dynamics, ≤2 validation cycles, no DAG-shape evidence). Append `<ISO> [REFLECT_SKIPPED] task_count=<N> (<=2; small goal)` to progress_log.md and skip to step 6.
-   - **`task_count >= 3`** → resolve the persistent per-project B-side dir first, then spawn reflector:
-     ```bash
-     BSIDE=$(python3 "$GID_PY" bside-dir --base "${GID_BASE:-.}" --plugin-data "$PLUGIN_DATA")   # → {"ok":true,"path":...}; use .path
-     ```
-     Spawn reflector via Agent tool. Prompt: "Execute your reflector role per agents/reflector.md. The goal just COMPLETE'd. **bside_context_dir: `<BSIDE.path>`** (absolute — write/read ALL B-side learnings here, NOT .get-it-done/context/). Analyse validation_log + progress_log + the most recent batch handoffs. Update A-side and B-side learnings per your classification matrix. Do NOT change .get-it-done/state.md phase. Do NOT emit an agent-return block — your output is the file writes themselves."
-     (If `bside-dir` fails — e.g. Python/git unavailable — fall back to passing `bside_context_dir: .get-it-done/context` so reflection still runs, degraded to the old per-goal scope; append `<ISO> [BSIDE_FALLBACK] <reason>` to progress_log.md.)
-6. Reflector returns (or was skipped); EXIT. Reflection failures are logged ([REFLECT_FAIL]) but do NOT roll back COMPLETE.
-```
+Reflector is NOT part of the relay. It runs once per goal, after every task reaches `Status: done`. Full procedure: Read `references/report-and-reflect.md` and execute it in full whenever this function is invoked (Step 5 or Step 11).
 
 ## Dispatcher self-loop principle
 
