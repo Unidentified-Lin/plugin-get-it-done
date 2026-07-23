@@ -189,20 +189,12 @@ OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTI
 
    注意：先 Read 舊 goal.md 抽出 prior `## Refinement History` 區段的 bullets（若存在），整個 list 接在新區段下、再 append 本次 hard entry。避免每次 hard 覆寫都清空之前的修訂史。
 
-2. **重置 planner artifacts**（同 /objective Step 4 的指令）：
+2. **重置 planner artifacts**（與 /objective Step 4 相同，統一經由 `bootstrap.py reset` — 所有路徑以 `--base` 為基準，避免相對路徑在多目標模式下寫錯位置）：
    ```bash
-   cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/task_queue.md" .get-it-done/task_queue.md
-   cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/metrics.md" .get-it-done/metrics.md
-   cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/research_requests.md" .get-it-done/research_requests.md
-   cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/findings/_meta.md" .get-it-done/findings/_meta.md
-
-   find .get-it-done/findings -type f -name 'RQ-*.md' -delete
-
-   rm -rf .get-it-done/workspace
-   mkdir -p .get-it-done/workspace
-
-   B="${GID_BASE:-.}"
-   rm -f "$B/.get-it-done/prd.md" "$B/.get-it-done/plan_audit.md"
+   BOOTSTRAP="${CLAUDE_PLUGIN_ROOT}/skills/objective/scripts/bootstrap.py"   # Copilot: {plugin-root}/skills/objective/scripts/bootstrap.py
+   # 覆蓋：force-copy task_queue.md / metrics.md / research_requests.md / findings/_meta.md，
+   # 刪除 findings/RQ-*.md、清空 workspace/、移除 prd.md 與 plan_audit.md
+   python3 "$BOOTSTRAP" reset --base "${GID_BASE:-.}"
 
    # hard reset is GOAL-SCOPED: clears THIS goal's task worktrees + gid/T-* branches (never other
    # goals), keeping the goal worktree itself + its branch. (soft does NOT reset.) Back-compat
