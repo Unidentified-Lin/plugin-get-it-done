@@ -39,7 +39,7 @@ python3 "$GID_PY" state    # smoke test; on Windows try `python` if `python3` is
 - The script also owns all **git operations** (worktree isolation + commit consolidation, see Steps 0.6/6/9): `git-preflight`, `worktree-add|-commit-wip|-merge|-drop|-gc|-reset-all`, `check-stray-edits`, `consolidate-milestone|-final`. These mutate the repo and `git_state.json`; you call them, the script does the deterministic git work and returns `{ok: ...}`.
 - The script owns the **mechanical state writes** too (Steps 6/9/10): `claim-batch` (pre-write + claims), `persist-return` (one agent-return → task_queue/RQ/log writes + `next_actions`), `close-batch` (close envelope + history). Single-writer is preserved — the writer is now these sequential script calls instead of your Edit tool, still gated by your own logic for *which* action to take. (`git_state.json` is the script's own; never hand-edit it.)
 
-**Read/write restriction (common path).** Outside the documented manual-fallback paths and Step 2 crash recovery, do **NOT** directly `Read` or `Edit` `state.md` / `task_queue.md` / `research_requests.md`. Read them via `gid.py state` / `pool` / `rqs` (JSON); write them via `claim-batch` / `persist-return` / `close-batch`. This keeps the large, churn-heavy state files out of your context in the hot loop. `progress_log.md` / `validation_log.md` remain append-only via the script (`persist-return`, `log-append`, `truncate-logs`); sub-agent scratch dirs and findings files stay sub-agent-owned.
+**Read/write restriction (common path).** Outside the documented exceptions, do **NOT** directly `Read` or `Edit` `state.md` / `task_queue.md` / `research_requests.md`. Read them via `gid.py state` / `pool` / `rqs` (JSON); write them via `claim-batch` / `persist-return` / `close-batch`. This keeps the large, churn-heavy state files out of your context in the hot loop. The exceptions where a direct `Edit` is still sanctioned: the **manual-fallback** paths (script unavailable), **Step 2 crash recovery** (re-asserting claims / closing an interrupted batch), and the **BAD_RETURN claim-clear/status-revert** in Step 8/9 (there is no subcommand for it — the return has no parseable verdict to persist). `progress_log.md` / `validation_log.md` remain append-only via the script (`persist-return`, `log-append`, `truncate-logs`); sub-agent scratch dirs and findings files stay sub-agent-owned.
 
 ## Step 0.6: Git mode + goal worktree + reaper
 
@@ -66,7 +66,7 @@ python3 "$GID_PY" worktree-gc --base "$GID_BASE"     # reaper: remove any TASK w
 
 ## Step 1: Schema version check
 
-Read the YAML block at the top of `.get-it-done/state.md`. If `schema_version` is missing or `< 2`, this is a pre-v2 file from an older plugin version:
+Take `schema_version` from the `gid.py state` JSON you already ran in Step 0.5 (no direct Read needed). If it is missing or `< 2`, this is a pre-v2 file from an older plugin version:
 
 > ".get-it-done/state.md 使用舊 schema。執行 `/objective <goal>` 來重設為 v2（這會保留 progress_log、validation_log、context/ 和 A-side learnings）。"
 
@@ -334,7 +334,7 @@ echo '{"role": "<role>", "task_id": "<T-XXX | M-X | RQ-X>", "mode": "<task|miles
 
 ## Step 10: Close the batch
 
-**Script path.** `close-batch` rewrites the state.md YAML (`status: WAITING`, `batch_ended_at: now`, `active_agents: []`, `phase: <decided>`) and appends the `## Batch <id>` history block:
+**Script path.** `close-batch` rewrites the state.md YAML (`status: WAITING`, `batch_ended_at: now`, `active_agents: []`, `last_updated: now`, `phase: <decided>`) and appends the `## Batch <id>` history block:
 
 ```bash
 echo '{"phase": "<decided phase>", "intent": "<one-line plan for the next tick>",

@@ -1543,6 +1543,12 @@ def cmd_persist_return(payload=None):
         has_touches = _has_touches(lines, tid)
         status = ret.get("status")
         if status == "completed":
+            # `executed` fires on ANY completed return. The pre-Phase-6 prose gated this on
+            # `artifact present OR type in {code, config}` — but a completed non-code task with a
+            # null artifact then had no defined transition and stuck at `claimed` (an orphan once
+            # the claim was cleared). Advancing to `executed` unconditionally lets the per-task
+            # validator judge the (possibly empty) result instead of stranding it. Intentional,
+            # documented divergence — see manual-fallback.md §"Step 9 fallback".
             artifact = ret.get("artifact") or ""
             _set_field(lines, span, "Artifact", artifact if artifact else "null")
             _set_field(lines, span, "Status", "executed")

@@ -181,6 +181,7 @@ batch_started_at: <ISO now>
 batch_ended_at: null
 active_agents:                          # one entry per work item in `batch`
   - role: <item.role>
+    mode: <task|milestone>              # validators only; omit for others
     task_id: <item.task_id>
     scratch: <item.scratch>             # null for non-executor
     started_at: <ISO now>
@@ -202,7 +203,7 @@ Replaces `persist-return`. Initialise `planned_pause_list := []`. BAD_RETURN ite
 
 **Executor return:**
 - Set `Artifact: <return.artifact>` (or null if `return.status != completed`); increment `Attempts` by 1; clear `Claimed_by`, `Claimed_at`.
-- `Status: executed` if `return.status == completed` (artifact may be null for `code`/`config` tasks — their deliverable is the changed source in `Touches`).
+- `Status: executed` if `return.status == completed` (artifact may be null for `code`/`config` tasks — their deliverable is the changed source in `Touches`). Note: this fires on **any** completed return — a deliberate change from the pre-Phase-6 rule (which advanced only when an artifact was present OR the type was `code`/`config`, leaving other completed-but-empty returns stuck at `claimed`); the per-task validator now judges an empty result instead.
 - `Status: blocked` if `return.status == failed` — append `[BLOCKER] T-XXX: <notes>` to progress_log.md; worktree mode → `python3 "$GID_PY" worktree-drop T-XXX --keep-branch`.
 - Append `<ISO> [EXEC_DONE] T-XXX attempt=N artifact=<path> status=<status>` to progress_log.md.
 - **Git (worktree mode), Status became `executed`:** sequential source task (goal worktree) → no git call now (committed on validator PASS); parallel source task → `python3 "$GID_PY" worktree-commit-wip T-XXX --attempt <Attempts>`; no-`Touches` task → run the stray-edit guard `python3 "$GID_PY" check-stray-edits T-XXX --revert`; if `dirty_source` non-empty, append those paths to `Touches`, append `[TOUCHES_UNDERDECLARED] T-XXX <paths>`, set `Status: needs_rework` (clear `Artifact`).
