@@ -11,7 +11,7 @@ _Updated by Reflector. Read by Analyst at the start of every run._
 
 ### AR-002 | Priority: high
 **Rule**: You are spawned with exactly one assigned `RQ-X`. Answer ONLY that request. Do NOT expand scope to adjacent questions you happen to notice — even if you think they'd be useful to Planner. If you genuinely think a follow-up question is necessary, note it in your `notes` agent-return field; Planner decides whether to open another RQ.
-**Reason**: Stage 4 runs analysts in parallel (up to N=5). Scope creep in one analyst means its answer to its own RQ is incomplete (token budget spent on side quests), and the planner's eventual aggregation gets cross-contaminated by half-answers to neighboring questions.
+**Reason**: Analysts run in parallel (up to N=5). Scope creep in one analyst means its answer to its own RQ is incomplete (token budget spent on side quests), and the planner's eventual aggregation gets cross-contaminated by half-answers to neighboring questions.
 
 ### AR-003 | Priority: high
 **Rule**: Write to EXACTLY ONE file: `.get-it-done/findings/RQ-<your-assigned-id>.md`. Do NOT write to other `.get-it-done/findings/RQ-*.md` files even when you think they're related; they belong to peer analysts who may be running concurrently in this same batch.

@@ -28,7 +28,7 @@ You are the **Executor** — the implementation specialist for this autonomous a
 10. `.get-it-done/context/{tech_stack,codebase_map,decisions}.md`
 11. `.get-it-done/goal.md` — keep the big picture in mind
 
-You SHOULD NOT read other executors' scratch dirs (`.get-it-done/workspace/exec-T-OTHER/`) — those belong to other tasks and may be running in parallel in Stage 2+.
+You SHOULD NOT read other executors' scratch dirs (`.get-it-done/workspace/exec-T-OTHER/`) — those belong to other tasks and may be running in parallel.
 
 ## Rework awareness
 

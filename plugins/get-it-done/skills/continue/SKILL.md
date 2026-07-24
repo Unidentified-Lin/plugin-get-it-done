@@ -129,7 +129,7 @@ IF state.status == RUNNING AND state.batch_ended_at == null:
         # durably persisted; only the batch envelope is unclosed.
         append "<ISO> [CRASH_CLOSE_ONLY] batch=<state.batch_id> — persisted but not closed; reconstructing close." to progress_log.md
         
-        # Clean up stale Claimed_by on fulfilled RQs (Fix A2)
+        # Clean up stale Claimed_by on fulfilled RQs
         # If an RQ is marked fulfilled but still has Claimed_by set, it means Step 9 flipped Status
         # but Step 10's close didn't run, so the claim marker wasn't cleared. Clear it now.
         FOR each RQ in research_requests.md:
@@ -170,7 +170,7 @@ If `phase ∈ {EXECUTING, REPORTING}` AND `.get-it-done/task_queue.md` has any t
 
 **Manual fallback**: script unavailable → Read `references/manual-fallback.md` §"Step 4 fallback" and follow it. This is defensive; planner self-audit should catch this first, but the dispatcher is the last gate.
 
-## Step 5: Pick the actionable batch (Stage 3: heterogeneous, up to N work items)
+## Step 5: Pick the actionable batch (heterogeneous, up to N work items)
 
 **Script path** (EXECUTING phase): `python3 "$GID_PY" pool --base "$GID_BASE" --git-mode <git_mode> --max-worktrees 8 --max-parallel <max_parallel>` computes everything below deterministically — derived milestone statuses, the priority-ordered pool (P1→P4) with Touches collision deferral, the sequentiality cap, the worktree hard-cap / fallback race guard, and the first-5 `batch` slice. Map its output to the decisions:
 - `batch` non-empty → that IS your batch; log each `deferred` entry as `<ISO> [DEFER] <task_id> <reason>` (reasons: `touches conflict with ...`, `max_parallel` = more source executors than `max_parallel` allows this tick, `wt_cap` = task-worktree hard-cap backpressure, `fallback_race_guard` = #6 guard in non-git mode); GOTO Step 6.
@@ -196,7 +196,7 @@ The batch is allowed to mix roles because every work item writes to a **disjoint
 | Executor (any task) | `.get-it-done/workspace/exec-<task_id>/` — task-id-keyed | none vs peers in the same batch |
 | Project-source-touching executor | project source paths declared in the task description | guarded by **PR-013** in planner rules: tasks with overlapping source paths MUST be made DAG-dependent so they never co-occur in the same batch. Validators don't write to project source. |
 
-Order within the pool is **priority**, not arbitrary — validators come first so executed tasks unblock downstream pendings ASAP, then milestone validators (closing milestones unblocks the next milestone's pool), then reworks (converge stalled loops), then new pendings. Stage 3 still cannot peek ahead to see what would maximize total throughput across multiple ticks; this is a greedy, single-tick scheduler.
+Order within the pool is **priority**, not arbitrary — validators come first so executed tasks unblock downstream pendings ASAP, then milestone validators (closing milestones unblocks the next milestone's pool), then reworks (converge stalled loops), then new pendings. The pool cannot peek ahead to see what would maximize total throughput across multiple ticks; this is a greedy, single-tick scheduler.
 
 ## Step 6: Atomic pre-write (state + claim every task in the batch)
 
@@ -230,7 +230,7 @@ Then for **every** item in `batch` (do all claims atomically inside one task_que
 - `analyst` item: in `.get-it-done/research_requests.md`, set the matching RQ entry's `Claimed_by: analyst-<RQ-id>`, `Claimed_at: <ISO now>`. Leave `Status: open` (it flips to `fulfilled` on persist in Step 9). Do all RQ claims in the same rewrite as the state.md atomic pre-write.
 - `planner` item: no task_queue change.
 
-Heterogeneous batches are normal in Stage 3 — mixed roles in `batch` are expected.
+Heterogeneous batches are normal — mixed roles in `batch` are expected.
 
 ## Step 7: Spawn the batch (parallel Agent calls in ONE assistant message)
 
@@ -350,7 +350,7 @@ Milestone status is derived (see task_queue.md "Derivation rule") — the dispat
 - If `verdict == fail` AND `escalate_to_blocked == false`:
   - If `task_ids_to_rework` is non-empty: for each `task_id` in the list, set that task's `Status: needs_rework`, clear `Artifact`. The next tick's Step 5 will re-pick them as P3 (rework) items. Milestone_status() now derives `pending` (because tasks are no longer all done); once they all re-reach done, derivation flows to `tasks_done` and Step 5 P2 will spawn another milestone validator that reads the appended VR entry as context.
   - If `task_ids_to_rework` is empty (structural failure — validator couldn't name specific tasks to blame):
-    **[FIX #3: Preserve diagnostic evidence, escalate to human]** Do NOT clear VR; instead flip to AWAITING_HUMAN so human can review the validator's evidence and decide the next step:
+    Preserve diagnostic evidence and escalate to human — do NOT clear VR; instead flip to AWAITING_HUMAN so human can review the validator's evidence and decide the next step:
     - Leave the milestone's `Validation Results` intact (evidence is preserved for human review).
     - Flip phase to `AWAITING_HUMAN` (not PLANNING, because this requires human judgment).
     - Append `<ISO> [BAD_MILESTONE] <milestone_id> structural fail (no rework path); awaiting human decision` to progress_log.md.
@@ -452,7 +452,7 @@ There is no context-budget guard — if the session truly runs out of context mi
 - No mid-flight communication with sub-agents (they cannot be interrupted; their result arrives whole).
 - No direct edits to executor artifacts, analyst findings, or PRD content — those are sub-agent property.
 - No silent retry of a task whose validator returned `escalate_to_blocked: true` — that goes straight to AWAITING_HUMAN.
-- Stage 3: heterogeneous batches (mixed per-task validators, milestone validators, reworks, new executors), N≤5. Source-path collisions between parallel executors must be ruled out at planning time by PR-013 in `agent_rules/planner.md` (declare overlapping tasks as DAG-dependent).
+- Heterogeneous batches (mixed per-task validators, milestone validators, reworks, new executors), N≤5. Source-path collisions between parallel executors must be ruled out at planning time by PR-013 in `agent_rules/planner.md` (declare overlapping tasks as DAG-dependent).
 - No reflector invocation outside `report_and_reflect()`, and no reflector at all for small goals (`task_count <= 2` → `[REFLECT_SKIPPED]`).
 
 Keep this skill thin in spirit — but recognize that the dispatcher legitimately owns more logic now than in v1, because sub-agents no longer touch shared state. If something feels like it belongs in an agent .md, ask whether moving it would re-introduce concurrent writes to shared files. If yes, it stays here.

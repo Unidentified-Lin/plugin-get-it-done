@@ -4,8 +4,6 @@
 
 ## 狀態機（v2 — batch-aware dispatcher）
 
-**（注：本文所述所有並行化特性均為 v2 架構中的活躍功能；無需再區分 Stage 標籤。）**
-
 ```
 主流程：
   PLANNING → (ANALYZING — 平行 N analysts)? → PLANNING → EXECUTING → REPORTING → COMPLETE
@@ -14,7 +12,7 @@
     - executed tasks → 派 validator
     - needs_rework → 重派 executor
     - pending tasks (deps 全 done) → 派 executor
-    - 某「多任務」milestone 全 done → 派 milestone validator (Stage 3+)；單任務 milestone 自動 validated，不派
+    - 某「多任務」milestone 全 done → 派 milestone validator；單任務 milestone 自動 validated，不派
   一個 batch 內可同時包含多個異質 sub-agents（最多 N 個）。
 
 收尾（dispatcher 主導）：
@@ -22,7 +20,7 @@
   並另起獨立 reflector sub-agent 做事後反思（不影響 COMPLETE）。
 ```
 
-**Stage 5（目前 — A/B Learning Architecture Complete）**：
+**目前架構（A/B Learning Architecture Complete）**：
 - **EXECUTING**：每 batch ≤5、**異質**（per-task validators + milestone validators + rework executors + new executors 可同 batch）。優先序：drain per-task validators → 關 milestone validators → reworks → 新 pendings。**Milestone 閘**：`M_k` 的 task 只在每個 `M_1..M_{k-1}` 都 derived `validated` 後才能 claim。
 - **ANALYZING**：每 batch ≤5 analysts，每個對應一個獨立的 RQ-X。PR-012 保證 RQ 之間相互獨立，可安全平行；每個 analyst 寫自己的 `.get-it-done/findings/RQ-X.md`，無寫入衝突。
 - **PLANNING**：N=1（planner 是 singleton role）。
@@ -52,7 +50,7 @@ Milestone status 由 dispatcher 每 tick 從 per-task statuses + Claimed_by + �
 | Agent | `planner` | 將目標拆解成任務 DAG（含 Dependencies + Milestone）+ 驗收標準；必要時產出 PRD；可一次列出 N 個獨立 research requests |
 | Agent | `analyst` | 由 dispatcher 指派單一 `RQ-X`，寫對應 `.get-it-done/findings/RQ-X.md` |
 | Agent | `executor` | 由 dispatcher 指派單一 `T-XXX`，產出寫入 `.get-it-done/workspace/exec-T-XXX/` |
-| Agent | `validator` | 由 dispatcher 指派單一 `T-XXX`（或 milestone `M-X`，Stage 3+），輸出 verdict + `escalate_to_blocked` |
+| Agent | `validator` | 由 dispatcher 指派單一 `T-XXX`（或 milestone `M-X`），輸出 verdict + `escalate_to_blocked` |
 | Agent | `reflector` | **事後反思**（不在主 relay）。Dispatcher 在 REPORTING 完成後另起 sub-agent，將學習分類為 A（跨專案）或 B（單一專案）寫回對應位置 |
 
 ## 安裝

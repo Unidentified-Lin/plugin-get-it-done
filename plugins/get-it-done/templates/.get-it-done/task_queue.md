@@ -36,7 +36,7 @@ Every task MUST have a `Dependencies:` field — a possibly-empty list of task I
 
 Planner self-checks the DAG before handing the task_queue to the dispatcher (no cycles, no self-refs, no references to non-existent task IDs). The dispatcher also runs a defensive DAG pre-check on every tick — if violations are found it falls phase back to `PLANNING` (so Planner can fix it) and writes a `[BAD_DAG]` line to `progress_log.md`. No batch is spawned until the DAG validates.
 
-Tasks may also carry a `Milestone:` field (e.g. `M1`). When all tasks in a **multi-task** milestone reach `Status: done`, the dispatcher spawns one **milestone validator** to verify the milestone's overall acceptance criteria before any work in a downstream milestone is allowed to start. A **single-task** milestone is auto-validated the moment its lone task is `done` (no milestone validator — per-task validation already covered it and there is no cross-task integration to check). Milestone validators are not enabled in Stage 1 (single-track), but planner should still populate the field — it activates in Stage 3.
+Tasks may also carry a `Milestone:` field (e.g. `M1`). When all tasks in a **multi-task** milestone reach `Status: done`, the dispatcher spawns one **milestone validator** to verify the milestone's overall acceptance criteria before any work in a downstream milestone is allowed to start. A **single-task** milestone is auto-validated the moment its lone task is `done` (no milestone validator — per-task validation already covered it and there is no cross-task integration to check). Planner must always populate the field.
 
 ## Per-task entry schema
 
@@ -81,7 +81,7 @@ Tasks may also carry a `Milestone:` field (e.g. `M1`). When all tasks in a **mul
 
 For tasks with `Type: webapp`, validators run in browser-verification mode (Claude for Chrome). See `agents/validator.md` for the protocol; nothing about webapp validation changes the schema above.
 
-## Milestones (Stage 3+)
+## Milestones
 
 Planner writes one entry per milestone alongside the task list. The dispatcher computes milestone status from per-task `Status` + this section, and gates downstream-milestone tasks on prior-milestone validation.
 

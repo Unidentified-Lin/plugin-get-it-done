@@ -15,7 +15,7 @@ When Planner needs research before it can finalize the PRD or task DAG, it write
 - **Depth**: shallow | medium | deep
 - **Notes for Analyst**: <optional context, scoping hints, sources to prefer>
 - **Status**: open                           # open | fulfilled; dispatcher flips to fulfilled when analyst returns
-- **Claimed_by**: null                       # analyst-RQ-1 while in-flight; cleared on persist (Stage 4+)
+- **Claimed_by**: null                       # analyst-RQ-1 while in-flight; cleared on persist
 - **Claimed_at**: null
 - **Findings path**: .get-it-done/findings/RQ-1.md   # echo of where the analyst writes
 ```
@@ -23,7 +23,7 @@ When Planner needs research before it can finalize the PRD or task DAG, it write
 ## Invariants
 
 - `RQ-` IDs are stable across batches; once Planner has decided RQ-3 exists, it never gets renumbered even if RQ-1 is dropped.
-- Each request is independent of every other request in the same batch (this is what permits parallel Analyst spawn — Stage 4 activates it). If two questions are interdependent, sequence them across two planner→analyst rounds rather than batching them. See PR-012.
+- Each request is independent of every other request in the same batch (this is what permits parallel Analyst spawn). If two questions are interdependent, sequence them across two planner→analyst rounds rather than batching them. See PR-012.
 - Planner re-reads `.get-it-done/findings/<req_id>.md` for every open request before re-running its decomposition.
 - `Claimed_by` is owned by the dispatcher — Planner never writes it. The dispatcher sets it just before spawning the analyst and clears it on persist. A non-null `Claimed_by` with `Status: open` is the crash-recovery signal (see `.get-it-done/state.md` crash detection contract).
 

@@ -52,7 +52,7 @@ PHASE_BRANCH_PLANNING:
         GOTO step 6
 
     IF phase == ANALYZING:
-        # Stage 4: parallel analysts, one per open RQ, up to N_MAX.
+        # Parallel analysts, one per open RQ, up to N_MAX.
         # PR-012 guarantees the open RQs are independent of each other (planner enforces).
         open_rqs := every entry in .get-it-done/research_requests.md with Status: open AND Claimed_by == null,
                     ordered by RQ-id ascending
@@ -102,7 +102,7 @@ PHASE_BRANCH_EXECUTING:
                               ordered by M.id ascending:
         pool.append({ role: validator, mode: milestone, task_id: M.id, scratch: null })
 
-    # P3 & P4: Executors (rework and new) — collision-aware [FIX N2: unified collision detection]
+    # P3 & P4: Executors (rework and new) — collision-aware (unified collision detection)
     # Pre-declare collision-tracking set (includes validators but only source-touching executors need check)
     source_touching_executors := []     # {task_id, Touches} of all executors already in pool
 

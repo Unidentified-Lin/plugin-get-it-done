@@ -20,13 +20,13 @@ last_updated: null           # ISO timestamp — set whenever dispatcher rewrite
 
 ```yaml
 - role: executor             # executor | validator | analyst | planner | reflector
-  mode: null                 # validators: task | milestone (Stage 3+); others: null
+  mode: null                 # validators: task | milestone; others: null
   task_id: T-007             # task ID, milestone ID (e.g. M2), or req_id (analyst) — null for planner
   scratch: .get-it-done/workspace/exec-T-007/    # executor-only; validator/analyst/planner: null
   started_at: 2026-05-23T15:04:11Z
 ```
 
-Parallelism (Stage 3): `1 <= len(active_agents) <= 5` while `status: RUNNING`. EXECUTING batches are heterogeneous — a single batch may mix per-task validators (`role: validator, mode: task`), milestone validators (`role: validator, mode: milestone`), rework executors, and new-pending executors. Planner and Analyst phases remain N=1; parallel Analyst unlocks in Stage 4.
+Parallelism: `1 <= len(active_agents) <= 5` while `status: RUNNING`. EXECUTING batches are heterogeneous — a single batch may mix per-task validators (`role: validator, mode: task`), milestone validators (`role: validator, mode: milestone`), rework executors, and new-pending executors. Planner remains N=1 (singleton); Analyst batches run in parallel, one per open RQ, up to N.
 
 ## Phase Definitions
 
@@ -68,7 +68,7 @@ AWAITING_HUMAN → previous-phase  (human resolves block via state.md edit or ne
 
 The dispatcher follows this sequence for every batch:
 
-1. **Plan the batch** — read state.md and task_queue.md; compute the actionable pool (see `skills/continue/SKILL.md`); pick up to N work items (Stage 1: N=1).
+1. **Plan the batch** — read state.md and task_queue.md; compute the actionable pool (see `skills/continue/SKILL.md`); pick up to N work items (N=1 for PLANNING's singleton planner; up to 5 for ANALYZING/EXECUTING).
 2. **Pre-write state (atomic, before spawn)** — set `status: RUNNING`, allocate next `batch_id`, fill `active_agents` (with `started_at`, `task_id`, `scratch` per entry), set `batch_started_at`, clear `batch_ended_at`. For each task being claimed, set `Claimed_by` / `Claimed_at` in task_queue.md. Do NOT increment `Attempts` yet — that happens on result.
 3. **Spawn sub-agents** in a single assistant message (parallel Task calls).
 4. **Collect results** — every sub-agent return MUST contain a `---agent-return---` … `---end---` fenced YAML block (schema below). Free-form prose outside that block is ignored by the dispatcher.
@@ -77,14 +77,14 @@ The dispatcher follows this sequence for every batch:
 
 ## Crash detection contract
 
-A crash is `status == RUNNING` AND `batch_ended_at == null`. On entry the dispatcher detects this with three sub-cases (Stage 5+):
+A crash is `status == RUNNING` AND `batch_ended_at == null`. On entry the dispatcher detects this with three sub-cases:
 
-**Sub-case 0: PLANNING singleton crash (Stage 5+)**
+**Sub-case 0: PLANNING singleton crash**
 - Condition: `phase == PLANNING` AND `status == RUNNING` AND `batch_ended_at == null`
 - Detection: Planner is N=1 (singleton) and never writes `Claimed_by` markers. Presence of RUNNING + PLANNING signals potential crash.
 - Recovery: If `batch_started_at` is recent (<5 min old), assume planner is still working; exit and retry `/continue` in ~30s. If stale (≥5 min), assume planner crashed mid-execution; reset phase back to `PLANNING`, set `status=WAITING`, append `[CRASH_DETECTED]` to progress_log, and exit so planner restarts on next tick.
 
-**Sub-case A: Sub-agent batch interrupted (Stage 3+)**
+**Sub-case A: Sub-agent batch interrupted**
 - Condition: `status == RUNNING` AND `batch_ended_at == null` AND `claimed_set` is non-empty (where `claimed_set` = tasks/milestones/RQs with `Claimed_by != null`)
 - Recovery: Re-spawn **every item in claimed_set** using the same identifiers (task_id, scratch dir for executors, req_id for analysts). Re-spawn is safe because:
   - Executor scratch dirs are keyed by `task_id` — re-runs overwrite their own files, never another task's.
@@ -93,7 +93,7 @@ A crash is `status == RUNNING` AND `batch_ended_at == null`. On entry the dispat
   - Analyst findings files are per-RQ and overwrite cleanly; RQ stays `Status: open`.
   - The dispatcher resets `batch_started_at` to the recovery time and resets `active_agents` to match the re-spawned set; old `batch_id` is reused.
 
-**Sub-case B: Batch close interrupted (Stage 3+)**
+**Sub-case B: Batch close interrupted**
 - Condition: `status == RUNNING` AND `batch_ended_at == null` AND `claimed_set` is empty (work was persisted but batch envelope not closed)
 - Recovery: Clean up stale `Claimed_by` markers (especially fulfilled RQs with leftover `Claimed_by`), close the batch envelope, and proceed to next tick derivation.
 
@@ -125,7 +125,7 @@ artifact: .get-it-done/workspace/exec-T-007/result.md   # path written by this s
 notes: 一句到三句話的人類可讀摘要               # short; long prose belongs in the artifact
 
 # validator-only fields:
-mode: task                        # task | milestone (Stage 3+; matches the mode in the spawn prompt)
+mode: task                        # task | milestone (matches the mode in the spawn prompt)
 verdict: pass                     # pass | fail
 fail_reasons:                     # required when verdict == fail; each item maps to a metrics criterion id or PRD ref
   - "criterion C2: button missing aria-label"

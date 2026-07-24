@@ -153,10 +153,10 @@
 - [x] **Phase 3**：bootstrap 雙平台區塊歸位 platform-adapter §7（continue/adjust/objective 三處 + blueprint 的 task-breakdown-guide.md 共四處收斂）。⚠️ **意外發現並修正一個 P0 級 bug**：objective/SKILL.md 與 task-breakdown-guide.md 的 Windows PowerShell 區塊原本寫死 `--base "."`，未讀 `$env:GID_BASE`（adjust 的對應區塊原本是對的）——多目標模式下 Windows Copilot 執行 `/objective` 或 `/blueprint` 交接會把 bootstrap 寫到 repo root 而非目標 worktree，與 Phase 1 的 P0-1 同一類型。已在使用者確認後隨本 phase 一併修正（canonical 版本現在正確讀取 `$env:GID_BASE`）。
 - [x] **Phase 3**：worktree 模型 canonical 化（state.md 為準，其餘摘要化；main-flow.md 與 platform-adapter §9.5 均已縮為摘要 + 指向 state.md「Git isolation」）
 - [x] **Phase 3**：關鍵句 grep 驗證單一來源（sub-agent 交叉驗證通過；並額外抓到 task-breakdown-guide.md 殘留的第四份 bootstrap 副本，已一併收斂修正）
-- [ ] **Phase 4**：`[FIX ...]` / v1 對照標記清除
-- [ ] **Phase 4**：「Stage N」術語全數改寫
-- [ ] **Phase 4**：規則編號引用驗證 + 補出處
-- [ ] **Phase 4**：（待確認）adjust SKILL 語言統一
+- [x] **Phase 4**：`[FIX ...]` / v1 對照標記清除（continue/SKILL.md、manual-fallback.md、agents/planner.md）
+- [x] **Phase 4**：「Stage N」術語全數改寫（README + 5 個 agents/*.md + 4 個 templates/*.md + 2 個 agent_rules/*.md + continue/SKILL.md 系列，共 ~35 處；blueprint 的 `## Stage: <name>` pipeline 命名法為不同語意，予以保留）
+- [x] **Phase 4**：規則編號引用驗證 + 補出處（PR-009/012/013/019、RR-005 全數比對 agent_rules 定義，無 dangling reference）
+- [x] **Phase 4**：adjust SKILL 語言統一（使用者確認後翻譯為英文；user-facing 繁中字串逐一比對保留）。sub-agent 交叉驗證：Stage/標記清除為純刪除、無語意變更；adjust 翻譯後決策樹/YAML/bash 完全一致，9 條 user-facing 字串逐字保留。
 - [ ] **Phase 5**：gid.py 純邏輯單元測試
 - [ ] **Phase 5**：gid.py git 整合測試
 - [ ] **Phase 6**：gid.py 寫入子命令（claim-batch / persist-return / close-batch / log-append）
