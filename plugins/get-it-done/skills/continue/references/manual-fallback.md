@@ -164,6 +164,65 @@ PHASE_BRANCH_EXECUTING:
     GOTO step 6
 ```
 
-## Step 6 fallback — batch-id allocation
+## Step 6 fallback — atomic pre-write + claims
 
-Read the highest existing `## Batch` block in state.md and increment; if none, start at `B0001`.
+Replaces `claim-batch` when the script is down. Do all of the following before spawning (Step 7); the state.md rewrite and every task_queue.md claim may be several Edit calls in one turn but MUST all complete first.
+
+**batch-id**: read the highest existing `## Batch` block in state.md (and the current `batch_id:`) and increment; if none, start at `B0001`.
+
+**Rewrite state.md YAML block** (preserving everything below it):
+
+```yaml
+schema_version: 2
+phase: <unchanged>
+status: RUNNING
+batch_id: <next>
+batch_started_at: <ISO now>
+batch_ended_at: null
+active_agents:                          # one entry per work item in `batch`
+  - role: <item.role>
+    task_id: <item.task_id>
+    scratch: <item.scratch>             # null for non-executor
+    started_at: <ISO now>
+goal_set: <unchanged>
+last_updated: <ISO now>
+```
+
+**Then claim every item** (do NOT touch `Attempts` yet):
+
+- `executor`: task `Claimed_by: exec-<task_id>`, `Claimed_at: <ISO now>`, `Status: claimed`; ensure `.get-it-done/workspace/exec-<task_id>/` exists. **Worktree assignment** (worktree git_mode, source-touching task): **sequential** (`max_parallel<=1` OR only 1 source executor this batch) → the task's worktree IS the goal worktree (do NOT call `worktree-add`); **parallel** (`max_parallel>1` AND ≥2 source executors) → `python3 "$GID_PY" worktree-add <task_id> --base "$GID_BASE"`, note the returned `path` (idempotent).
+- `validator mode:task`: task `Claimed_by: val-<task_id>`, `Claimed_at: <ISO now>`, `Status: validating`.
+- `validator mode:milestone`: milestone `Claimed_by: mval-<milestone_id>`, `Claimed_at: <ISO now>`; per-task `Status: done` untouched (Step 9 flips only on `task_ids_to_rework`). No persisted milestone `Status:` field.
+- `analyst`: RQ `Claimed_by: analyst-<RQ-id>`, `Claimed_at: <ISO now>`; `Status: open` (flips to `fulfilled` on persist).
+- `planner`: no task_queue change.
+
+## Step 9 fallback — persist every return by hand
+
+Replaces `persist-return`. Initialise `planned_pause_list := []`. BAD_RETURN items skip persistence (just clear `Claimed_by`/`Claimed_at`, revert `Status` to pre-claim).
+
+**Executor return:**
+- Set `Artifact: <return.artifact>` (or null if `return.status != completed`); increment `Attempts` by 1; clear `Claimed_by`, `Claimed_at`.
+- `Status: executed` if `return.status == completed` (artifact may be null for `code`/`config` tasks — their deliverable is the changed source in `Touches`).
+- `Status: blocked` if `return.status == failed` — append `[BLOCKER] T-XXX: <notes>` to progress_log.md; worktree mode → `python3 "$GID_PY" worktree-drop T-XXX --keep-branch`.
+- Append `<ISO> [EXEC_DONE] T-XXX attempt=N artifact=<path> status=<status>` to progress_log.md.
+- **Git (worktree mode), Status became `executed`:** sequential source task (goal worktree) → no git call now (committed on validator PASS); parallel source task → `python3 "$GID_PY" worktree-commit-wip T-XXX --attempt <Attempts>`; no-`Touches` task → run the stray-edit guard `python3 "$GID_PY" check-stray-edits T-XXX --revert`; if `dirty_source` non-empty, append those paths to `Touches`, append `[TOUCHES_UNDERDECLARED] T-XXX <paths>`, set `Status: needs_rework` (clear `Artifact`).
+
+**Validator return (`mode: task`):**
+- Append a `Validation Results` entry `{ attempt_no: <Attempts>, verdict, fail_reasons, escalate_to_blocked, notes, at }`.
+- Append `VAL-XXX` to validation_log.md (next monotonic VAL; dedup-key `(task_id, attempt_no)` — skip if present).
+- Clear `Claimed_by`, `Claimed_at`.
+- `verdict == pass` → `Status: done`; worktree source task: sequential → `python3 "$GID_PY" goal-commit-task T-XXX`; parallel → `python3 "$GID_PY" worktree-merge T-XXX` (on `{ok:false,reason:"conflict",files}` → `Status: needs_rework`, clear `Artifact`, `[MERGE_CONFLICT] T-XXX <files>`, carry files into next rework; worktree kept).
+- `verdict == fail` AND not escalate → `Status: needs_rework`, clear `Artifact` (keep worktree).
+- `verdict == fail` AND escalate → `Status: blocked`; `[BLOCKER] T-XXX escalated by validator after N attempts`; worktree → `worktree-drop T-XXX --keep-branch`.
+
+**Validator return (`mode: milestone`):** milestone status is derived — do NOT write a milestone `Status:` field.
+- Increment milestone `ValidatorAttempts` by 1, then append `Validation Results` `{ attempt_no: <ValidatorAttempts>, verdict, fail_reasons, task_ids_to_rework, escalate_to_blocked, notes, at }`; clear `Claimed_by`, `Claimed_at`.
+- Append `MVAL-XXX` to validation_log.md (dedup-key `(milestone_id, attempt_no)`).
+- `verdict == pass` → no per-task change; worktree → `python3 "$GID_PY" consolidate-milestone <M>`. If the milestone has `PauseAfter: true`, append `{ milestone_id, reason: <PauseReason> }` to `planned_pause_list`.
+- `verdict == fail`, not escalate, `task_ids_to_rework` non-empty → set each listed task `Status: needs_rework`, clear `Artifact`.
+- `verdict == fail`, not escalate, `task_ids_to_rework` empty (structural failure) → leave VR intact, flip `phase = AWAITING_HUMAN`, append `[BAD_MILESTONE] <milestone_id> structural fail (no rework path); awaiting human decision`.
+- `verdict == fail` AND escalate → `phase = AWAITING_HUMAN`; `[BLOCKER] <milestone_id> escalated by milestone validator`.
+
+**Analyst return:** flip RQ `Status: fulfilled`, clear `Claimed_by`/`Claimed_at`; confirm `.get-it-done/findings/<req_id>.md` exists (else BAD_RETURN — leave `Status: open`, `Claimed_by: null`). Append `[ANALYST_DONE] <req_id>`.
+
+**Planner return:** read `next_phase_request` — `ANALYZING` (confirm RQ IDs `open` → `phase = ANALYZING`), `EXECUTING` (confirm task_queue + metrics populated, run the **plan audit gate** `references/plan-audit-gate.md` before flipping), `REPORTING` (rare). Append `[PLAN_DONE] next=<next_phase_request>`.

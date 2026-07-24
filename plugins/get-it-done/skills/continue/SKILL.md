@@ -34,10 +34,12 @@ GID_PY="${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py"   # Copilot: {plug
 python3 "$GID_PY" state    # smoke test; on Windows try `python` if `python3` is absent
 ```
 
-- Prints JSON → script is usable. Use it in Steps 3, 4, 5, 6, and 9 as documented there. All subcommands run **from the project root** (they read `.get-it-done/` relatively).
+- Prints JSON → script is usable. Use it in Steps 3, 4, 5, 6, 9, and 10 as documented there. All subcommands run **from the project root** (they read `.get-it-done/` relatively).
 - Python unavailable, or the script exits 2 / prints `{"error": ...}` → fall back to the manual procedure kept in each step. Log `<ISO> [GID_FALLBACK] <reason>` once to progress_log.md.
 - The script also owns all **git operations** (worktree isolation + commit consolidation, see Steps 0.6/6/9): `git-preflight`, `worktree-add|-commit-wip|-merge|-drop|-gc|-reset-all`, `check-stray-edits`, `consolidate-milestone|-final`. These mutate the repo and `git_state.json`; you call them, the script does the deterministic git work and returns `{ok: ...}`.
-- The script is read-only for `.get-it-done/*.md` state — every write to `state.md` / `task_queue.md` / `research_requests.md` remains yours. (`git_state.json` is the script's own; never hand-edit it.)
+- The script owns the **mechanical state writes** too (Steps 6/9/10): `claim-batch` (pre-write + claims), `persist-return` (one agent-return → task_queue/RQ/log writes + `next_actions`), `close-batch` (close envelope + history). Single-writer is preserved — the writer is now these sequential script calls instead of your Edit tool, still gated by your own logic for *which* action to take. (`git_state.json` is the script's own; never hand-edit it.)
+
+**Read/write restriction (common path).** Outside the documented manual-fallback paths and Step 2 crash recovery, do **NOT** directly `Read` or `Edit` `state.md` / `task_queue.md` / `research_requests.md`. Read them via `gid.py state` / `pool` / `rqs` (JSON); write them via `claim-batch` / `persist-return` / `close-batch`. This keeps the large, churn-heavy state files out of your context in the hot loop. `progress_log.md` / `validation_log.md` remain append-only via the script (`persist-return`, `log-append`, `truncate-logs`); sub-agent scratch dirs and findings files stay sub-agent-owned.
 
 ## Step 0.6: Git mode + goal worktree + reaper
 
@@ -200,35 +202,18 @@ Order within the pool is **priority**, not arbitrary — validators come first s
 
 ## Step 6: Atomic pre-write (state + claim every task in the batch)
 
-Generate the next `batch_id`: `python3 "$GID_PY" batch-id` (monotonic over `## Batch` history + current `batch_id`). Manual fallback: Read `references/manual-fallback.md` §"Step 6 fallback".
+**Script path.** Pass Step 5's `batch` list straight to `claim-batch` — it allocates the next `batch_id`, rewrites the state.md YAML block (`status: RUNNING`, new `batch_id`, `batch_started_at`, `active_agents`, preserving all spec prose below the block), sets every per-item claim in task_queue.md / research_requests.md, and assigns task worktrees for parallel source executors — all in one call:
 
-```
-Rewrite state.md YAML block (preserving everything below the block):
-    schema_version: 2
-    phase: <unchanged>
-    status: RUNNING
-    batch_id: <next>
-    batch_started_at: <ISO now>
-    batch_ended_at: null
-    active_agents:                          # one entry per work item in `batch`
-      - role: <item.role>
-        task_id: <item.task_id>
-        scratch: <item.scratch>             # null for non-executor
-        started_at: <ISO now>
-      - ...                                 # repeat for every item in batch (length 1..N_MAX)
-    goal_set: <unchanged>
-    last_updated: <ISO now>
+```bash
+echo '{"batch": <Step-5 batch list>, "git_mode": "<git_mode>", "max_parallel": <max_parallel>}' \
+  | python3 "$GID_PY" claim-batch --base "$GID_BASE"
 ```
 
-Then for **every** item in `batch` (do all claims atomically inside one task_queue.md rewrite — multiple Edit calls in the same assistant turn before the spawn message is fine, but they MUST all complete before Step 7):
+The claim semantics it applies per item (for your understanding — you do NOT write these yourself): `executor` → `Status: claimed`, `Claimed_by: exec-<task_id>`, makes the scratch dir; `validator mode:task` → `Status: validating`, `Claimed_by: val-<task_id>`; `validator mode:milestone` → milestone `Claimed_by: mval-<milestone_id>` (per-task `Status: done` untouched — Step 9 flips them only on `task_ids_to_rework`); `analyst` → RQ `Claimed_by: analyst-<RQ-id>` (`Status: open` until Step 9); `planner` → no task_queue change. `Attempts` is NOT touched here (that happens on result).
 
-- `executor` item: set the task's `Claimed_by: exec-<task_id>`, `Claimed_at: <ISO now>`, `Status: claimed`. Do NOT touch `Attempts` yet. Ensure `.get-it-done/workspace/exec-<task_id>/` exists. **Worktree assignment** (worktree git_mode, source-touching task):
-  - **Sequential** (`max_parallel<=1`, OR this batch has only 1 source executor): the task's worktree IS `_goal` — `.get-it-done/worktrees/_goal`. Do NOT call `worktree-add`.
-  - **Parallel** (`max_parallel>1` AND this batch has ≥2 source executors): call `python3 "$GID_PY" worktree-add <task_id>` (branches `gid/<task_id>` from `gid/goal-<slug>`) and note the returned `path` (idempotent — reuses an existing worktree on crash-recovery / rework; recreates from the surviving branch for a blocked-retry).
-- `validator` item with `mode: task`: set the task's `Claimed_by: val-<task_id>`, `Claimed_at: <ISO now>`, `Status: validating`.
-- `validator` item with `mode: milestone`: in the `## Milestones` section of task_queue.md, set the milestone's `Claimed_by: mval-<milestone_id>`, `Claimed_at: <ISO now>`. The tasks inside the milestone keep their `Status: done` — milestone-mode validation does NOT touch per-task status fields directly (Step 9 may flip them to needs_rework based on `task_ids_to_rework` in the agent-return). The milestone has no persisted `Status:` field; derivation in Step 5 will see `Claimed_by != null` and return `"validating"`.
-- `analyst` item: in `.get-it-done/research_requests.md`, set the matching RQ entry's `Claimed_by: analyst-<RQ-id>`, `Claimed_at: <ISO now>`. Leave `Status: open` (it flips to `fulfilled` on persist in Step 9). Do all RQ claims in the same rewrite as the state.md atomic pre-write.
-- `planner` item: no task_queue change.
+**Worktree assignment** (done inside `claim-batch`; git_mode-dependent): a source-touching executor runs **sequentially** in the goal worktree (`$GID_BASE`) when `max_parallel<=1` OR this batch has only 1 source executor; otherwise **parallel** — `claim-batch` calls `worktree-add` for each, branching `gid/<slug>-<task_id>` from `gid/goal-<slug>`. The response's `worktrees` map (`{task_id: path}`) plus `parallel` flag tell you which worktree path to hand each source item in Step 7. `claim-batch` echoes `{ok, batch_id, active_agents, worktrees, parallel}` so you need not re-read state.md.
+
+**Manual fallback** (script unavailable / exits 2): Read `references/manual-fallback.md` §"Step 6 fallback" and do the pre-write + claims by hand (`batch-id` for the id). Log `[GID_FALLBACK]` per Step 0.5.
 
 Heterogeneous batches are normal — mixed roles in `batch` are expected.
 
@@ -314,81 +299,52 @@ A BAD_RETURN from one item does NOT abort the rest of the batch — every well-f
 
 ## Step 9: Persist the batch results
 
-For each well-formed return (BAD_RETURN items skip this and just have Claimed_by/Claimed_at cleared + Status reverted to pre-claim):
+**Script path.** Initialise `planned_pause_list := []` and `phase_request := null`. For each **well-formed** return (BAD_RETURN items skip persistence — just clear their `Claimed_by`/`Claimed_at` and revert `Status` to pre-claim; `log-append` can write the `[BAD_RETURN]` line), call `persist-return` once, passing the parsed agent-return plus the context you already have:
 
-**Executor return:**
-- Set task `Artifact: <return.artifact>` (or null if return.status != completed).
-- Increment `Attempts` by 1.
-- Clear `Claimed_by`, `Claimed_at`.
-- Set `Status: executed` if return.status == completed and (return.artifact present OR task `type` is `code`/`config` — these tasks edit source files directly; their deliverable is the changed files listed in `Touches`, not a scratch `result.md`. Artifact may be null for code/config tasks without penalising the status transition).
-- Set `Status: blocked` if return.status == failed (executor cannot complete) — also append `[BLOCKER] T-XXX: <notes>` to progress_log.md. **In worktree mode**, `python3 "$GID_PY" worktree-drop T-XXX --keep-branch` (remove the worktree, keep `gid/T-XXX` for forensics).
-- Append `<ISO> [EXEC_DONE] T-XXX attempt=N artifact=<path> status=<status>` to progress_log.md.
-- **Git (worktree mode), when Status became `executed`:**
-  - **Sequential source task** (ran in `_goal`): no git call now — the edits sit in `_goal`'s working tree and are committed on validator PASS (below). The `_goal` worktree is never reaped mid-goal, so executor→validator share it (fixes the early-reap issue).
-  - **Parallel source task** (had its own task worktree): `python3 "$GID_PY" worktree-commit-wip T-XXX --attempt <Attempts>` (durably commits the task worktree's changes to `gid/T-XXX`; no-ops cleanly if unchanged).
-  - **No `Touches`** (artifact-only, possible under-declaration): run the stray-edit guard `python3 "$GID_PY" check-stray-edits T-XXX --revert`. If `dirty_source` is non-empty, the planner under-declared `Touches`: append those paths to the task's `Touches` field (you own task_queue), append `<ISO> [TOUCHES_UNDERDECLARED] T-XXX <paths>` to progress_log.md, and set `Status: needs_rework` (clear `Artifact`). The `--revert` already removed the stray edits, so nothing lingers — the rework re-runs in `_goal`/a task worktree next tick.
+```bash
+echo '{"role": "<role>", "task_id": "<T-XXX | M-X | RQ-X>", "mode": "<task|milestone>",
+       "git_mode": "<git_mode>", "worktree_mode": "<parallel|sequential>",
+       "return": <the parsed ---agent-return--- YAML as a JSON object>}' \
+  | python3 "$GID_PY" persist-return --base "$GID_BASE"
+```
 
-**Validator return (`mode: task`):**
-- Append a new entry to the task's `Validation Results` array with `{ attempt_no: <Attempts at time of this run>, verdict, fail_reasons, escalate_to_blocked, notes, at }`.
-- Append a `VAL-XXX` entry to `.get-it-done/validation_log.md` (next monotonic VAL number; dedup-key is `(task_id, attempt_no)` — if an entry with that key exists, skip the append).
-- Clear `Claimed_by`, `Claimed_at`.
-- If `verdict == pass`: set `Status: done`. **In worktree mode, if the task is source-touching**, commit it onto the goal branch:
-  - **Sequential** (ran in `_goal`): `python3 "$GID_PY" goal-commit-task T-XXX` → one commit on `gid/goal-<slug>` (no-ops on no changes).
-  - **Parallel** (own task worktree): `python3 "$GID_PY" worktree-merge T-XXX` → squash-merge into `gid/goal-<slug>` (worktree + branch removed). On `{ok:false, reason:"conflict", files:[...]}` → set `Status: needs_rework` instead of done, clear `Artifact`, append `<ISO> [MERGE_CONFLICT] T-XXX <files>` to progress_log.md, and carry the conflict files into the next rework as a fail-reason (the task worktree is kept for the retry).
-- If `verdict == fail` AND `escalate_to_blocked == false`: set `Status: needs_rework`, clear `Artifact`. (Worktree mode: keep the worktree — the rework reuses it.)
-- If `verdict == fail` AND `escalate_to_blocked == true`: set `Status: blocked`. Append `[BLOCKER] T-XXX escalated by validator after N attempts` to progress_log.md. **In worktree mode**: `python3 "$GID_PY" worktree-drop T-XXX --keep-branch`.
+`worktree_mode` is how that source item ran this batch (from Step 6's `parallel` flag / `worktrees` map); omit for non-source items. `persist-return` does all the task_queue.md / research_requests.md field updates + `progress_log`/`validation_log` appends (VAL/MVAL deduped on `(id, attempt_no)`), then returns:
 
-**Validator return (`mode: milestone`):**
+- `status_after` — the task/RQ status it wrote (or `validated`/`rework`/`structural_fail`/`planned` for milestones/planner).
+- `next_actions` — an ordered list of **gid.py git subcommands you must now run**, e.g. `["worktree-commit-wip T-003 --attempt 2"]`, `["worktree-merge T-003"]`, `["goal-commit-task T-003"]`, `["worktree-drop T-003 --keep-branch"]`, `["consolidate-milestone M1"]`. Run each as `python3 "$GID_PY" <action> --base "$GID_BASE"` in order. `persist-return` decides *which*; the already-tested git commands do the work.
+- `phase_request` — set by planner returns (`ANALYZING`/`EXECUTING`/`REPORTING`) and by milestone escalation / structural failure (`AWAITING_HUMAN`). Carry it into Step 10's `phase` (last-writer among the batch wins; `AWAITING_HUMAN` dominates).
+- `planned_pause` — present when a passing milestone had `PauseAfter: true`; **append** it to `planned_pause_list` (a list, because one batch may pass several PauseAfter milestones). Step 11 reads the list.
+- `followups` — human-readable notes for the rare branches **not yet scripted** (see the fallback block below); act on them per that prose.
 
-Milestone status is derived (see task_queue.md "Derivation rule") — the dispatcher does NOT write a `Status:` field for milestones. Instead it persists the validator's verdict in the milestone's `Validation Results` array and (where applicable) flips per-task statuses; the next read of milestone_status() will reflect those changes naturally.
+**After running `next_actions`, two results need your judgment (the scripted followup cases):**
+- A `worktree-merge <T>` that returns `{ok:false, reason:"conflict", files:[...]}` → set that task `Status: needs_rework` and clear `Artifact` (via a corrective `persist-return`, or the manual fallback if the script is down), append `<ISO> [MERGE_CONFLICT] <T> <files>` with `log-append`, and carry the conflict files into the next rework as a fail-reason (the task worktree is kept for the retry).
+- A `planner` `phase_request: EXECUTING` → run the **plan audit gate** (`references/plan-audit-gate.md`) in full **before** you set `phase: EXECUTING` in Step 10.
 
-> **Single-task milestones never reach this branch.** They auto-validate (derive straight to `validated` once their lone task is `done`), so no milestone validator is ever spawned for them and there is nothing to persist here. Their single commit is already one commit on the goal branch, so the `consolidate-milestone` step below would be a no-op anyway.
+### Edge branches — NOT yet scripted (core-path scope); handle these inline
 
-- In `## Milestones` section, **first increment** milestone `ValidatorAttempts` by 1, then append to the milestone's `Validation Results` array with `{ attempt_no: <milestone.ValidatorAttempts after increment>, verdict, fail_reasons, task_ids_to_rework, escalate_to_blocked, notes, at }`. Clear `Claimed_by`, `Claimed_at`.
-- Append `MVAL-XXX` entry to `.get-it-done/validation_log.md` (next monotonic MVAL number; dedup-key is `(milestone_id, attempt_no)`).
-- If `verdict == pass`: no per-task changes; milestone_status() will derive `validated` from the latest VR entry. Downstream-milestone tasks become eligible on the next tick. **In worktree mode**, consolidate this milestone's per-task commits into one: `python3 "$GID_PY" consolidate-milestone <M>` (safe here — all `M`'s tasks are merged and no downstream worktree exists yet; skips itself cleanly if already one commit or the branch is pushed). **Planned-pause check**: if the milestone entry has `PauseAfter: true`, **append** an entry `{ milestone_id: <M-X>, reason: <milestone.PauseReason> }` to a transient list `planned_pause_list` (initialise to `[]` at the start of Step 9 if not already set). The list is a list — not a single value — because a heterogeneous batch can contain multiple milestone validators, and each passing PauseAfter milestone must be announced (the previous single-value design clobbered earlier entries). Step 11 will read this list and EXIT cleanly after Step 10 closes the batch (soft pause: phase remains EXECUTING, status WAITING — the user's next /continue resumes the next downstream milestone naturally).
-- If `verdict == fail` AND `escalate_to_blocked == false`:
-  - If `task_ids_to_rework` is non-empty: for each `task_id` in the list, set that task's `Status: needs_rework`, clear `Artifact`. The next tick's Step 5 will re-pick them as P3 (rework) items. Milestone_status() now derives `pending` (because tasks are no longer all done); once they all re-reach done, derivation flows to `tasks_done` and Step 5 P2 will spawn another milestone validator that reads the appended VR entry as context.
-  - If `task_ids_to_rework` is empty (structural failure — validator couldn't name specific tasks to blame):
-    Preserve diagnostic evidence and escalate to human — do NOT clear VR; instead flip to AWAITING_HUMAN so human can review the validator's evidence and decide the next step:
-    - Leave the milestone's `Validation Results` intact (evidence is preserved for human review).
-    - Flip phase to `AWAITING_HUMAN` (not PLANNING, because this requires human judgment).
-    - Append `<ISO> [BAD_MILESTONE] <milestone_id> structural fail (no rework path); awaiting human decision` to progress_log.md.
-    - Per-task statuses remain unchanged (`done`); human will read validator verdict in validation_log and either (a) edit task_queue to reshape the milestone, or (b) escalate the goal. Planner will only re-enter when human gives explicit approval (next `/continue` after state.md phase is changed back).
-- If `verdict == fail` AND `escalate_to_blocked == true`: flip phase to `AWAITING_HUMAN`. Append `[BLOCKER] <milestone_id> escalated by milestone validator` to progress_log.md. Per-task statuses unchanged; milestone_status() will derive `blocked` from the latest VR entry.
+`persist-return` covers the common branches (executor completed/failed, validator task pass/fail/escalate, validator milestone pass/fail-with-rework, analyst, planner). These rarer branches surface as `followups` and stay manual:
 
-**Analyst return:**
-- In `.get-it-done/research_requests.md`, flip the matching `RQ-X` entry to `Status: fulfilled` and clear `Claimed_by`, `Claimed_at`. Confirm `.get-it-done/findings/<req_id>.md` exists; if not, treat as `[BAD_RETURN]` (above) — leave the RQ as `Status: open` with `Claimed_by: null` so the next tick re-spawns it.
-- Append `<ISO> [ANALYST_DONE] <req_id>` to progress_log.md.
+- **`TOUCHES_UNDERDECLARED`** — for a **completed executor with no `Touches`** in worktree mode, `persist-return` sets `Status: executed` but emits a followup to run the stray-edit guard: `python3 "$GID_PY" check-stray-edits <T> --revert`. If `dirty_source` is non-empty, the planner under-declared `Touches`: append those paths to the task's `Touches` field, `log-append` a `[TOUCHES_UNDERDECLARED] <T> <paths>` line, and correct the task to `Status: needs_rework` (clear `Artifact`). The `--revert` already removed the stray edits; the rework re-runs next tick. (Scripting the `Touches` mutation is deferred — it edits planner-owned data.)
+- **Milestone structural failure** (`verdict: fail`, empty `task_ids_to_rework`, no escalate) — `persist-return` preserves the milestone VR, logs `[BAD_MILESTONE]`, and returns `phase_request: AWAITING_HUMAN`; honor that in Step 10. Per-task statuses stay `done`; the human reviews the validator evidence in `validation_log` and either reshapes the milestone or escalates the goal. Planner re-enters only after the human changes the phase back.
+- **Multiple `PauseAfter` milestones in one batch** — cross-cutting with Step 11: each passing PauseAfter milestone contributes one `planned_pause` entry you accumulate into `planned_pause_list`; Step 11 announces them all.
 
-**Planner return:**
-- Read `next_phase_request`:
-  - `ANALYZING`: confirm `research_requests.md` now has the requested `RQ-` IDs with `Status: open`; set `phase = ANALYZING`.
-  - `EXECUTING`: confirm `task_queue.md` and `.get-it-done/metrics.md` are populated, then run the **plan audit gate** below before flipping the phase.
-  - `REPORTING`: rare — only when planner determines the goal is already satisfied; set `phase = REPORTING`.
-- Append `<ISO> [PLAN_DONE] next=<next_phase_request>` to progress_log.md.
+> **Single-task milestones never reach the milestone branch.** They auto-validate (derive straight to `validated` once their lone task is `done`), so no milestone validator is spawned and there is nothing to persist. Their single commit is already one commit on the goal branch, so `consolidate-milestone` would be a no-op anyway.
 
-**Plan audit gate (quality check before EXECUTING):** Read `references/plan-audit-gate.md` and execute it in full before flipping phase to EXECUTING.
+**Manual fallback** (script unavailable / exits 2): Read `references/manual-fallback.md` §"Step 9 fallback" and persist every return's fields by hand (the per-role write rules live there). Log `[GID_FALLBACK]` per Step 0.5.
 
 ## Step 10: Close the batch
 
-```
-Rewrite state.md YAML block:
-    status: WAITING
-    batch_ended_at: <ISO now>
-    active_agents: []
-    last_updated: <ISO now>
-    phase: <decided above>
+**Script path.** `close-batch` rewrites the state.md YAML (`status: WAITING`, `batch_ended_at: now`, `active_agents: []`, `phase: <decided>`) and appends the `## Batch <id>` history block:
 
-Append to bottom of state.md:
-    ## Batch <batch_id> — <batch_started_at> → <batch_ended_at>
-    - <role> <task_id> → <return.status / verdict>, artifact: <path or "(none)">     # one line per item
-    - <role> <task_id> → ...                                                            # repeat for every batch item
-    next_phase: <decided>
-    intent: <one-line plan for what the next tick will do (e.g. "validate T-003, T-005, T-007; queue T-009 once deps clear")>
-
-Leave `batch_id` and `batch_started_at` populated as history; the next pre-write (Step 6) overwrites them atomically with `status: RUNNING` and a fresh `batch_id` so the crash check stays sound.
+```bash
+echo '{"phase": "<decided phase>", "intent": "<one-line plan for the next tick>",
+       "items": [{"role": "<role>", "task_id": "<T-XXX>", "status_or_verdict": "<status|verdict>", "artifact": "<path or empty>"}]}' \
+  | python3 "$GID_PY" close-batch --base "$GID_BASE"
 ```
+
+`<decided phase>` is the phase resolved from Step 9's `phase_request` signals (may stay EXECUTING, advance to REPORTING, or trip AWAITING_HUMAN). `close-batch` reads `batch_id`/`batch_started_at` from the current state.md, so it leaves them as history; the next pre-write (Step 6) overwrites them atomically with a fresh `batch_id` so the crash check stays sound.
+
+**Manual fallback** (script unavailable / exits 2): rewrite the state.md YAML block by hand (`status: WAITING`, `batch_ended_at: now`, `active_agents: []`, `last_updated: now`, `phase: <decided>`) and append the `## Batch <id> — <started> → <now>` block with one line per item, `next_phase:`, and `intent:`. Log `[GID_FALLBACK]` per Step 0.5.
 
 Re-run Step 4 (DAG check) if planner just wrote a new task_queue.
 

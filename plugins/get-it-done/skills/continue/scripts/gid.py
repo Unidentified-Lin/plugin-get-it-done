@@ -1476,7 +1476,7 @@ def cmd_claim_batch(payload=None):
                 if parallel:
                     worktrees[tid] = _worktree_add(tid).get("path")
                 else:
-                    worktrees[tid] = goal_wt_path()
+                    worktrees[tid] = os.path.abspath(goal_wt_path())   # goal worktree ($GID_BASE)
         elif lines is not None and role == "validator" and it.get("mode") == "task":
             span = _entry_span(lines, tid)
             if span:
