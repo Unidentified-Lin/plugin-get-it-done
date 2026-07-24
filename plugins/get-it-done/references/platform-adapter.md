@@ -259,7 +259,7 @@ There is no Skill tool. Read the target skill's `SKILL.md` from the plugin root 
 
 ## 9.5. Git worktree operations + multi-goal (GID_BASE)
 
-> **Full model** (worktree layout, `GID_BASE`/multi-goal semantics, parallelism rules, per-goal/per-task worktree relationship, `git_state.json` fields, the milestone-consolidation invariant): canonical spec is `templates/.get-it-done/state.md` § "Git isolation". This section covers only the **cross-platform operational differences** — how to call `gid.py`, and the OS-specific symlink mechanism.
+> **Full model** (worktree layout, `GID_BASE`/multi-goal semantics, parallelism rules, per-goal/per-task worktree relationship, `git_state.json` fields, the milestone-consolidation invariant): canonical spec is `templates/.get-it-done/STATE_SPEC.md` § "Git isolation". This section covers only the **cross-platform operational differences** — how to call `gid.py`, and the OS-specific symlink mechanism.
 
 All git work is done by `gid.py` — the only cross-platform difference in **invoking** it is the Python binary (`python3` / `python` on Windows).
 

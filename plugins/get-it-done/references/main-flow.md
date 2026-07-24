@@ -119,7 +119,7 @@ Independent tasks run concurrently in per-task worktrees, merged back on validat
 pass; each milestone consolidates to one commit; the goal branch is left for the
 user to review/merge (never auto-merged). Full model (parallelism rules, symlink
 structure, git_state.json fields, the milestone-consolidation invariant): canonical
-spec is templates/.get-it-done/state.md § "Git isolation".
+spec is templates/.get-it-done/STATE_SPEC.md § "Git isolation".
 ```
 
 ---

@@ -149,7 +149,7 @@ rsync -a --ignore-existing "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/" .get-
 | **覆寫**（每次重新從範本複製） | `.get-it-done/task_queue.md`, `.get-it-done/metrics.md`, `.get-it-done/research_requests.md`, `.get-it-done/findings/_meta.md` |
 | **刪除**（若殘留則移除） | `.get-it-done/prd.md`, `.get-it-done/findings/RQ-*.md`（前一個目標的研究結果） |
 | **整個目錄清空後重建** | `.get-it-done/workspace/`（每個 executor 的 scratch dir 不殘留） |
-| **只重設 YAML 區塊**（v2 schema） | `.get-it-done/state.md`（Phase / Transition / batch lifecycle / agent-return contract 文件保留） |
+| **只重設 YAML 區塊**（v2 schema） | `.get-it-done/state.md`（YAML 區塊 + `## Batch` 歷史；spec 文件在 `.get-it-done/STATE_SPEC.md`，由 bootstrap 刷新） |
 | **完全不動** | `.get-it-done/progress_log.md`, `.get-it-done/validation_log.md`, `.get-it-done/context/*`（B 側），所有 `${CLAUDE_PLUGIN_DATA}/team_learnings/`（A 側） |
 
 ## Plugin source 編輯（proposed-changes 流程）
@@ -208,7 +208,8 @@ plugins/get-it-done/
 │   │   ├── proposed_changes.md
 │   │   └── agent_rules/{planner,analyst,executor,validator,reflector}.md
 │   └── .get-it-done/                            ← 種入 <project>/.get-it-done/（B；不含 prd.md，由 Planner 視需要產生）
-│       ├── state.md                     ← v2 schema + Phase/Transition 文件
+│       ├── state.md                     ← v2 YAML 機器狀態 + `## Batch` 歷史
+│       ├── STATE_SPEC.md                ← 唯讀 spec：phases / transitions / crash / git-isolation / agent-return 契約
 │       ├── goal.md, task_queue.md, metrics.md
 │       ├── research_requests.md         ← planner 寫；analyst 讀
 │       ├── findings/_meta.md            ← directory；每 RQ 一個 RQ-X.md（analyst 寫）

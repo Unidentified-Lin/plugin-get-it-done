@@ -4,7 +4,7 @@ description: >-
   Sets a new business goal for the autonomous agent team and launches the first dispatcher cycle. Usage: /objective <goal description>. Bootstraps the project's .get-it-done/ workspace from plugin templates if missing, resets per-goal files, initializes v2 state schema (batch-aware), and starts the planning → execution → validation loop.
 ---
 
-You are executing **/objective**. This is how the user sets a business goal for the autonomous agent team. Both the v2 state schema (batch-aware) and the new agent-return YAML contract live in `.get-it-done/state.md` — read it after bootstrap if you need to refresh on the shapes.
+You are executing **/objective**. This is how the user sets a business goal for the autonomous agent team. The v2 state schema (batch-aware) is the YAML block in `.get-it-done/state.md`; the agent-return YAML contract and the rest of the spec (phases, transitions, crash recovery, git isolation) live in `.get-it-done/STATE_SPEC.md` — read them after bootstrap if you need to refresh on the shapes.
 
 ## Where state lives
 
@@ -45,7 +45,7 @@ If the file is pre-v2 (no `schema_version` or `schema_version < 2`), treat as re
 
 ## Step 2: Reset team state (v2 schema)
 
-Overwrite the YAML block at the top of `.get-it-done/state.md` (preserve everything below it — the State Machine docs, Phase Definitions, Transition Rules, batch lifecycle, agent-return contract):
+Overwrite the YAML block at the top of `.get-it-done/state.md` (preserve everything below it — the "Batch history" section header and any batch ledger). The spec prose (Phase Definitions, Transition Rules, batch lifecycle, agent-return contract) lives in `.get-it-done/STATE_SPEC.md`, which is refreshed from the template by `bootstrap.py reset` — do not touch it here:
 
 ```yaml
 schema_version: 2

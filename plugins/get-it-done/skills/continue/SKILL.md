@@ -153,7 +153,7 @@ ELSE:
 
 **Worktree-mode crash safety**: `goal-worktree-init` is idempotent — it reuses an existing `_goal` and re-asserts the shared-`.get-it-done` symlink after a crash. Sequential `goal-commit-task` no-ops on no changes; parallel `worktree-add` reuses an existing task worktree; `worktree-merge` is atomic and returns `skipped: already_merged` if the branch is gone, so a crash between merges loses nothing durable and never double-merges. Step 0.6's reaper removes orphaned TASK worktrees (never `_goal`). A benign duplicate `worktree-commit-wip --attempt N` after re-spawn is skipped by its no-change detection.
 
-This split closes the validator-rerun edge case automatically — sub-case B never re-spawns a validator whose verdict already landed in `validation_log.md`, so the `(task_id, attempt_no)` dedup never has to arbitrate two different verdicts on the same attempt. Re-spawn (sub-case A) is safe by the idempotency rules in `.get-it-done/state.md` (executor scratch dir keyed by task_id; Attempts not yet incremented; validation_log dedup on `(task_id, attempt_no)` / `(milestone_id, attempt_no)`; analyst writes to a per-RQ file `.get-it-done/findings/RQ-X.md` that overwrites cleanly on re-run because `Status: open` still holds — a fulfilled RQ is never re-spawned).
+This split closes the validator-rerun edge case automatically — sub-case B never re-spawns a validator whose verdict already landed in `validation_log.md`, so the `(task_id, attempt_no)` dedup never has to arbitrate two different verdicts on the same attempt. Re-spawn (sub-case A) is safe by the idempotency rules in `.get-it-done/STATE_SPEC.md` (crash detection contract) (executor scratch dir keyed by task_id; Attempts not yet incremented; validation_log dedup on `(task_id, attempt_no)` / `(milestone_id, attempt_no)`; analyst writes to a per-RQ file `.get-it-done/findings/RQ-X.md` that overwrites cleanly on re-run because `Status: open` still holds — a fulfilled RQ is never re-spawned).
 
 ## Step 3: Truncate-check (trimmed lines are archived, not lost)
 
@@ -239,7 +239,7 @@ role definition (executor → scratch dir; analyst → .get-it-done/findings/<re
 validator → no artifact).
 
 Terminate by emitting exactly one fenced `---agent-return---` YAML block at the end of your
-output, conforming to the contract in .get-it-done/state.md ("Agent-return YAML contract").
+output, conforming to the contract in .get-it-done/STATE_SPEC.md ("Agent-return YAML contract").
 
 DO NOT edit .get-it-done/state.md, .get-it-done/progress_log.md, or .get-it-done/validation_log.md.
 DO NOT read other sub-agents' scratch dirs or findings files even if you can see them in your
@@ -295,7 +295,7 @@ BAD_RETURN handling:
 
 A BAD_RETURN from one item does NOT abort the rest of the batch — every well-formed return is still persisted in Step 9. The bad item's task simply reverts to its pre-claim Status (`pending`, `needs_rework`, or `executed`) and the next tick will re-spawn it.
 
-**Agent contract note**: Agents MUST output the `---agent-return---` block at the **end** of their response, exactly as documented in `.get-it-done/state.md`. This is the ONLY field the dispatcher reads; all analysis and reasoning must be written to artifact files, not to stdout.
+**Agent contract note**: Agents MUST output the `---agent-return---` block at the **end** of their response, exactly as documented in `.get-it-done/STATE_SPEC.md` ("Agent-return YAML contract"). This is the ONLY field the dispatcher reads; all analysis and reasoning must be written to artifact files, not to stdout.
 
 ## Step 9: Persist the batch results
 
