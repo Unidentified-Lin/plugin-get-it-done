@@ -52,33 +52,22 @@ IF status == RUNNING (dispatcher is running or was interrupted last time):
     # state to PLANNING/WAITING, the next /continue's Step 2 won't run crash recovery
     # (its condition is RUNNING), and those claimed/validating tasks would be stuck forever.
     paused_batch := state.batch_id
-    append "<ISO> [ADJUST_PAUSE_REQUESTED] batch=<paused_batch> — user 透過 /adjust 介入；clearing in-flight claims" to progress_log.md
 
-    # 1. Roll back task_queue.md: every in-flight task reverts to its pre-claim state.
-    FOR each task in task_queue.md WHERE Claimed_by != null:
-        IF task.Status == claimed:    set task.Status = pending     ; clear Claimed_by / Claimed_at
-        IF task.Status == validating: set task.Status = executed    ; clear Claimed_by / Claimed_at
-        (preserve already-persisted fields such as Validation Results, Artifact, Attempts)
+    # Script path: `rollback-claims` does the whole in-flight rollback deterministically —
+    # task_queue (claimed→pending, validating→executed, clear claim; persisted Validation
+    # Results / Artifact / Attempts kept), milestones (clear mval claims), research_requests
+    # (open+claimed RQs → reassignable), and parks state.md at phase=AWAITING_HUMAN,
+    # status=WAITING, batch_ended_at=now, active_agents=[] (goal_set unchanged). It echoes
+    # {rolled_back:{tasks,milestones,rqs}}.
+    python3 "$GID_PY" log-append --file progress_log.md --base "$GID_BASE" \
+        --line "<ISO> [ADJUST_PAUSE_REQUESTED] batch=<paused_batch> — user 透過 /adjust 介入；clearing in-flight claims"
+    rolled := python3 "$GID_PY" rollback-claims --base "$GID_BASE"
 
-    # 2. Roll back milestones: clear mval-* claims (no other milestone state to touch).
-    FOR each milestone in task_queue.md ## Milestones WHERE Claimed_by != null:
-        clear Claimed_by / Claimed_at
-
-    # 3. Roll back research_requests.md: claimed-but-incomplete RQs become reassignable again.
-    FOR each RQ in research_requests.md WHERE Status == open AND Claimed_by != null:
-        clear Claimed_by / Claimed_at
-
-    # 4. Write state.md (spell out the full YAML explicitly, don't overwrite only some fields):
-    rewrite state.md YAML block:
-        schema_version: 2
-        phase: AWAITING_HUMAN
-        status: WAITING
-        batch_id: null
-        batch_started_at: null
-        batch_ended_at: <ISO now>
-        active_agents: []
-        goal_set: <unchanged, usually true>
-        last_updated: <ISO now>
+    # Manual fallback (script unavailable): do the four sub-steps by hand — task_queue rollback
+    # (claimed→pending, validating→executed, clear Claimed_by/Claimed_at, keep Validation
+    # Results/Artifact/Attempts), clear milestone mval claims, clear open-RQ analyst claims, then
+    # rewrite the state.md YAML block to phase=AWAITING_HUMAN / status=WAITING / batch_id=null /
+    # batch_started_at=null / batch_ended_at=<now> / active_agents=[] / last_updated=<now>.
 
     Tell the user: 「前一輪 batch <paused_batch> 的 in-flight 標記已清理（claimed→pending、validating→executed）；那些 sub-agent 的結果若有崩潰中遺失將由 planner / 下一輪 executor 重新處理。」
     Continue on into Step 2 (Step 3 will later flip phase from AWAITING_HUMAN to PLANNING).
@@ -121,22 +110,15 @@ If Step 1 already forced hard (the COMPLETE path), skip straight to Step 3b.
 
 2. **Preserve** the following files unchanged: `.get-it-done/task_queue.md`, `.get-it-done/prd.md`, `.get-it-done/research_requests.md`, `.get-it-done/findings/*`, `.get-it-done/workspace/*`, `.get-it-done/metrics.md`.
 
-3. **Rewrite the `.get-it-done/state.md` YAML block** (preserve all content below the block + `## Batch` history):
-   ```yaml
-   schema_version: 2
-   phase: PLANNING
-   status: WAITING
-   batch_id: null
-   batch_started_at: null
-   batch_ended_at: null
-   active_agents: []
-   goal_set: true
-   last_updated: <ISO now>
+3. **Reset the `.get-it-done/state.md` YAML block** to fresh PLANNING state, preserving the `## Batch` history (no `--clear-history` — this is the same goal, history stays):
+   ```bash
+   python3 "$GID_PY" reset-state --phase PLANNING --base "$GID_BASE"
    ```
+   (writes `phase: PLANNING`, `status: WAITING`, batch fields null, `active_agents: []`, `goal_set: true`, `last_updated: <now>`). Manual fallback: overwrite the YAML block by hand to those values, preserving everything below it.
 
 4. **Append to `.get-it-done/progress_log.md`**:
-   ```
-   <ISO> [GOAL_REFINED] soft — <first 100 chars of the user's message>
+   ```bash
+   python3 "$GID_PY" log-append --file progress_log.md --base "$GID_BASE" --line "<ISO> [GOAL_REFINED] soft — <first 100 chars of the user's message>"
    ```
 
 5. Skip to Step 4.
@@ -195,22 +177,15 @@ Confirm with the user: 「即將 hard 替換目標。task_queue.md、prd.md、fi
 
    Note: this is **deliberately different** from `/objective` here — `/objective` deletes the old `## Batch` blocks (since it's a brand-new goal with irrelevant history), but `/adjust` hard is a direction change within the SAME goal's context, so batch history is preserved for tracing prior attempts.
 
-4. **Rewrite the `.get-it-done/state.md` YAML block**:
-   ```yaml
-   schema_version: 2
-   phase: PLANNING
-   status: WAITING
-   batch_id: null
-   batch_started_at: null
-   batch_ended_at: null
-   active_agents: []
-   goal_set: true
-   last_updated: <ISO now>
+4. **Reset the `.get-it-done/state.md` YAML block** to fresh PLANNING state, preserving the `## Batch` history (no `--clear-history` — see step 3's note: same goal, history kept for tracing prior attempts):
+   ```bash
+   python3 "$GID_PY" reset-state --phase PLANNING --base "$GID_BASE"
    ```
+   Manual fallback: overwrite the YAML block by hand to `phase: PLANNING` / `status: WAITING` / batch fields null / `active_agents: []` / `goal_set: true` / `last_updated: <now>`, preserving everything below it.
 
 5. **Append to `.get-it-done/progress_log.md`**:
-   ```
-   <ISO> [GOAL_REFINED] hard — <first 100 chars of the new goal>
+   ```bash
+   python3 "$GID_PY" log-append --file progress_log.md --base "$GID_BASE" --line "<ISO> [GOAL_REFINED] hard — <first 100 chars of the new goal>"
    ```
 
 ## Step 4: Closing message (Traditional Chinese, user-facing)

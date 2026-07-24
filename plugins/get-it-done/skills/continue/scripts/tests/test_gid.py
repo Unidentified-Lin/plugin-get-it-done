@@ -895,6 +895,97 @@ class TestLogAppend(unittest.TestCase):
             self.assertEqual(log.count("[CRASH_DETECTED] batch=B1"), 1)
 
 
+class TestResetState(unittest.TestCase):
+    STATE_WITH_HISTORY = (STATE_FIXTURE.replace("phase: EXECUTING", "phase: EXECUTING")
+                          + "\n## Batch B0001 — a → b\n- executor T-001 → completed\n"
+                            "next_phase: EXECUTING\nintent: x\n"
+                            "\n## Batch B0002 — c → d\n- validator T-001 → pass\n"
+                            "next_phase: EXECUTING\nintent: y\n")
+
+    def _run(self, *argv):
+        import sys as _sys
+        old = _sys.argv
+        try:
+            _sys.argv = ["gid.py"] + list(argv)
+            return capture_json(gid.cmd_reset_state)
+        finally:
+            _sys.argv = old
+
+    def test_resets_yaml_preserves_history_by_default(self):
+        with temp_project({os.path.join(gid.GID_DIR, "state.md"): self.STATE_WITH_HISTORY}):
+            out = self._run("reset-state", "--phase", "PLANNING")
+            self.assertEqual(out["phase"], "PLANNING")
+            self.assertEqual(out["history_lines_stripped"], 0)
+            raw = gid.read(os.path.join(gid.GID_DIR, "state.md"))
+            st = gid.parse_state(raw)
+            self.assertEqual(st["phase"], "PLANNING")
+            self.assertEqual(st["status"], "WAITING")
+            self.assertIsNone(st["batch_id"])
+            self.assertTrue(st["goal_set"])
+            self.assertEqual(raw.count("## Batch B"), 2, "history preserved without --clear-history")
+
+    def test_clear_history_strips_batch_blocks_but_keeps_prose(self):
+        with temp_project({os.path.join(gid.GID_DIR, "state.md"): self.STATE_WITH_HISTORY}):
+            out = self._run("reset-state", "--phase", "PLANNING", "--clear-history")
+            self.assertGreater(out["history_lines_stripped"], 0)
+            raw = gid.read(os.path.join(gid.GID_DIR, "state.md"))
+            self.assertEqual(raw.count("## Batch B"), 0, "batch blocks removed")
+            self.assertIn("Phase Definitions", raw, "template prose above history preserved")
+            self.assertIn("schema_version: 2", raw)
+
+    def test_default_phase_is_planning(self):
+        with temp_project({os.path.join(gid.GID_DIR, "state.md"): STATE_FIXTURE}):
+            out = self._run("reset-state")
+            self.assertEqual(out["phase"], "PLANNING")
+
+
+class TestRollbackClaims(unittest.TestCase):
+    def _project(self):
+        state = STATE_FIXTURE.replace("status: WAITING", "status: RUNNING").replace(
+            "batch_id: null", 'batch_id: "B0007"')
+        tq = ("## Tasks\n"
+              + FULL_TASK_TMPL.format(id="T-001", title="a", type="docs", status="claimed",
+                                      touches="[]", attempts=1, milestone="M1")
+                .replace("- **Claimed_by**: null", "- **Claimed_by**: exec-T-001")
+              + FULL_TASK_TMPL.format(id="T-002", title="b", type="docs", status="validating",
+                                      touches="[]", attempts=1, milestone="M1")
+                .replace("- **Claimed_by**: null", "- **Claimed_by**: val-T-002")
+                .replace("- **Artifact**: null", "- **Artifact**: a/r.md")
+              + FULL_TASK_TMPL.format(id="T-003", title="c", type="docs", status="done",
+                                      touches="[]", attempts=1, milestone="M1")
+              + "\n## Milestones\n### M1: First\n- **Tasks**: [T-001, T-002, T-003]\n"
+                "- **Claimed_by**: mval-M1\n- **Claimed_at**: t\n- **ValidatorAttempts**: 0\n")
+        rr = ("# RR\n\n### RQ-1\n- **Status**: open\n- **Claimed_by**: analyst-RQ-1\n- **Claimed_at**: t\n"
+              "\n### RQ-2\n- **Status**: fulfilled\n- **Claimed_by**: null\n- **Claimed_at**: null\n")
+        return temp_project({
+            os.path.join(gid.GID_DIR, "state.md"): state,
+            os.path.join(gid.GID_DIR, "task_queue.md"): tq,
+            os.path.join(gid.GID_DIR, "research_requests.md"): rr,
+        })
+
+    def test_reverts_claims_and_parks_awaiting_human(self):
+        with self._project():
+            out = capture_json(gid.cmd_rollback_claims)
+            self.assertEqual(set(out["rolled_back"]["tasks"]), {"T-001", "T-002"})
+            self.assertEqual(out["rolled_back"]["milestones"], ["M1"])
+            self.assertEqual(out["rolled_back"]["rqs"], ["RQ-1"])
+            text = gid.read(os.path.join(gid.GID_DIR, "task_queue.md"))
+            self.assertEqual(_fields(text, "T-001")["status"], "pending")     # claimed → pending
+            self.assertEqual(_fields(text, "T-002")["status"], "executed")    # validating → executed
+            self.assertEqual(_fields(text, "T-002")["artifact"], "a/r.md")    # persisted fields kept
+            self.assertEqual(_fields(text, "T-003")["status"], "done")        # untouched
+            self.assertIsNone(_fields(text, "T-001")["claimed_by"])
+            self.assertIsNone(_fields(text, "M1")["claimed_by"])
+            rout = capture_json(gid.cmd_rqs)
+            self.assertNotIn("RQ-1", rout["open_claimed"])                    # claim cleared
+            st = gid.parse_state(gid.read(os.path.join(gid.GID_DIR, "state.md")))
+            self.assertEqual(st["phase"], "AWAITING_HUMAN")
+            self.assertEqual(st["status"], "WAITING")
+            self.assertEqual(st["active_agent_count"], 0)
+            self.assertIsNone(st["batch_id"])
+            self.assertIsNotNone(st["batch_ended_at"])
+
+
 # ==================================================== git integration tests
 
 GIT_AVAILABLE = shutil.which("git") is not None

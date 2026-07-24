@@ -22,6 +22,8 @@ Scripted state-write subcommands (Phase 6; JSON payload on stdin or --input <fil
   persist-return — Step 9: persist ONE agent-return (task_queue/RQ/log writes) + next_actions
   close-batch    — Step 10: state.md YAML → WAITING + batch history block
   log-append     — generic deduped append to a .get-it-done log file
+  reset-state    — /objective Step 2 & /adjust Step 3: reset state.md YAML to a fresh phase
+  rollback-claims— /adjust Step 1: revert in-flight claims (reverse of claim-batch) → AWAITING_HUMAN
 
 Exit code 0 = ran cleanly (check JSON "ok"/"violations" fields for verdicts);
 exit code 2 = could not parse required files (dispatcher falls back to manual procedure).
@@ -1745,6 +1747,98 @@ def cmd_close_batch(payload=None):
     print(json.dumps({"ok": True, "batch_id": bid}, ensure_ascii=False))
 
 
+# ------------------------------------------------ reset-state / rollback-claims (objective / adjust)
+
+def cmd_reset_state():
+    """Reset the state.md YAML block to a fresh single-phase state (used by /objective Step 2
+    and /adjust Steps 3a/3b). `--phase <P>` (default PLANNING). `--clear-history` also strips the
+    appended `## Batch <id>` / legacy `## Handoff` blocks from the bottom (objective wants a clean
+    slate; adjust preserves them). Everything else below the YAML block is preserved."""
+    phase = _flag("--phase", "PLANNING")
+    now = now_iso()
+    write_state_yaml({"phase": phase, "status": "WAITING", "batch_id": None,
+                      "batch_started_at": None, "batch_ended_at": None,
+                      "goal_set": True, "last_updated": now}, [])
+    stripped = 0
+    if "--clear-history" in sys.argv:
+        path = os.path.join(GID_DIR, "state.md")
+        text = read(path)
+        if text is not None:
+            lines = text.splitlines()
+            cut = None
+            for i, ln in enumerate(lines):
+                if re.match(r"^##\s+Batch\s+B\d+", ln) or re.match(r"^##\s+Handoff\b", ln):
+                    cut = i
+                    break
+            if cut is not None:
+                while cut > 0 and lines[cut - 1].strip() == "":   # drop blank lines before the block
+                    cut -= 1
+                stripped = len(lines) - cut
+                _write_lines(path, lines[:cut])
+    print(json.dumps({"ok": True, "phase": phase, "history_lines_stripped": stripped}))
+
+
+def cmd_rollback_claims():
+    """/adjust Step 1 RUNNING-rollback: the previous /continue crashed mid-batch and its
+    sub-agents can no longer return, so actively revert every in-flight claim (the REVERSE of
+    claim-batch) instead of leaving markers that never close. task_queue: claimed→pending,
+    validating→executed, clear claim (persisted Validation Results / Artifact / Attempts kept);
+    milestones: clear mval claims; research_requests: open+claimed RQs become reassignable.
+    Then park state at AWAITING_HUMAN (Step 3 flips it to PLANNING)."""
+    now = now_iso()
+    rolled = {"tasks": [], "milestones": [], "rqs": []}
+
+    tq_path = os.path.join(GID_DIR, "task_queue.md")
+    tq = read(tq_path)
+    if tq is not None:
+        lines = tq.splitlines()
+        tasks, milestones = parse_task_queue(tq)
+        for tid, t in tasks.items():
+            if not t.get("claimed_by"):
+                continue
+            span = _entry_span(lines, tid)
+            if span is None:
+                continue
+            if t.get("status") == "claimed":
+                _set_field(lines, span, "Status", "pending")
+            elif t.get("status") == "validating":
+                _set_field(lines, span, "Status", "executed")
+            _set_field(lines, span, "Claimed_by", "null")
+            _set_field(lines, span, "Claimed_at", "null")
+            rolled["tasks"].append(tid)
+        for mid, m in milestones.items():
+            if not m.get("claimed_by"):
+                continue
+            span = _entry_span(lines, mid)
+            if span:
+                _set_field(lines, span, "Claimed_by", "null")
+                _set_field(lines, span, "Claimed_at", "null")
+                rolled["milestones"].append(mid)
+        _write_lines(tq_path, lines)
+
+    rr_path = os.path.join(GID_DIR, "research_requests.md")
+    rr = read(rr_path)
+    if rr is not None:
+        rlines = rr.splitlines()
+        changed = False
+        for m in re.finditer(r"^###\s+(RQ-\w+)", rr, re.M):
+            span = _entry_span(rlines, m.group(1))
+            if span is None:
+                continue
+            claimed = _get_field(rlines, span, "Claimed_by")
+            if _get_field(rlines, span, "Status") == "open" and claimed and claimed != "null":
+                _set_field(rlines, span, "Claimed_by", "null")
+                _set_field(rlines, span, "Claimed_at", "null")
+                rolled["rqs"].append(m.group(1))
+                changed = True
+        if changed:
+            _write_lines(rr_path, rlines)
+
+    write_state_yaml({"phase": "AWAITING_HUMAN", "status": "WAITING", "batch_id": None,
+                      "batch_started_at": None, "batch_ended_at": now, "last_updated": now}, [])
+    print(json.dumps({"ok": True, "rolled_back": rolled}, ensure_ascii=False))
+
+
 # ---------------------------------------------------------------- log-append (generic)
 
 def cmd_log_append():
@@ -1767,7 +1861,7 @@ def cmd_log_append():
 
 _VALUE_FLAGS = {"--base", "--slug", "--base-path", "--attempt",
                 "--git-mode", "--max-worktrees", "--max-parallel",
-                "--input", "--file", "--line", "--dedup"}
+                "--input", "--file", "--line", "--dedup", "--phase"}
 
 
 def _flag(name, default=None):
@@ -1824,7 +1918,8 @@ def main():
             "goal-worktree-init|goal-commit-task|goal-reset|worktree-add|worktree-commit-wip|"
             "worktree-merge|worktree-drop|worktree-gc|worktree-reset-all|check-stray-edits|"
             "consolidate-milestone|consolidate-final|bside-dir|"
-            "claim-batch|persist-return|close-batch|log-append>  [--base <goal-worktree>]")
+            "claim-batch|persist-return|close-batch|log-append|reset-state|rollback-claims>  "
+            "[--base <goal-worktree>]")
     cmd = sys.argv[1]
 
     # Base switch: target a goal's worktree instead of cwd. Unset ⇒ base = cwd = repo root
@@ -1879,6 +1974,8 @@ def main():
         "persist-return": cmd_persist_return,
         "close-batch": cmd_close_batch,
         "log-append": cmd_log_append,
+        "reset-state": cmd_reset_state,
+        "rollback-claims": cmd_rollback_claims,
     }.get(cmd, lambda: die(f"unknown subcommand: {cmd}"))()
 
 

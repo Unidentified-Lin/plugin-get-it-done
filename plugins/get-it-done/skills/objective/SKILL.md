@@ -45,21 +45,15 @@ If the file is pre-v2 (no `schema_version` or `schema_version < 2`), treat as re
 
 ## Step 2: Reset team state (v2 schema)
 
-Overwrite the YAML block at the top of `.get-it-done/state.md` (preserve everything below it — the "Batch history" section header and any batch ledger). The spec prose (Phase Definitions, Transition Rules, batch lifecycle, agent-return contract) lives in `.get-it-done/STATE_SPEC.md`, which is refreshed from the template by `bootstrap.py reset` — do not touch it here:
+**Script path.** `reset-state` overwrites the state.md YAML block to a fresh planning state and, with `--clear-history`, strips any leftover `## Batch <id>` / legacy `## Handoff` blocks from a prior goal (a brand-new goal has no relevant history) while preserving the "Batch history" prose section. The spec prose lives in `.get-it-done/STATE_SPEC.md`, refreshed separately by `bootstrap.py reset` — do not touch it here.
 
-```yaml
-schema_version: 2
-phase: PLANNING
-status: WAITING
-batch_id: null
-batch_started_at: null
-batch_ended_at: null
-active_agents: []
-goal_set: true
-last_updated: <ISO timestamp>
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py" reset-state --phase PLANNING --clear-history --base "${GID_BASE:-.}"
 ```
 
-Also remove any leftover `## Batch <id>` blocks (or legacy `## Handoff` blocks) from prior goals at the bottom of state.md — they're stale and would confuse a future reader.
+This writes `phase: PLANNING`, `status: WAITING`, all batch fields null, `active_agents: []`, `goal_set: true`, `last_updated: <now>`.
+
+**Manual fallback** (script unavailable): overwrite the YAML block by hand to those values (preserving everything below it), and delete any `## Batch <id>` / `## Handoff` blocks from the bottom.
 
 ## Step 3: Write the goal
 
