@@ -1,5 +1,18 @@
 # Phase 6 Handoff — Scripted State Writes + state.md Split
 
+> **STATUS (2026-07-24): CORE-PATH SCOPE IMPLEMENTED on branch `feature/scripted-state-writes`
+> (commits 4a7f1bb, 67a66da, f41579a) — NOT merged, version not bumped, awaiting user's
+> "合回 master".** User chose core-path-first (§2). Delivered: the 4 gid.py subcommands
+> (`claim-batch`/`persist-return`/`close-batch`/`log-append`) with 21 new tests (68 total,
+> green); SKILL.md Steps 6/9/10 wired to them + the read/write restriction (§4); the
+> state.md → STATE_SPEC.md split (§5) with all cross-refs updated. Rare edge branches stay
+> as documented manual `followups` (the full-scope remainder). Still deferred (optional,
+> §4): scripting /objective + /adjust state writes and /adjust RUNNING-rollback. Recommended
+> before merge: an independent sub-agent semantic-equivalence check on the Step 6/9/10 prose
+> rewrites (§8) — not yet run. continue/SKILL.md landed at 414 lines (the ≤250 in §7 was
+> loosely calibrated; removed prose moved to references/manual-fallback.md). The rest of this
+> doc is the original pre-implementation plan, kept for reference.**
+
 > Read this BEFORE touching any code. It is written so a fresh session with zero prior
 > context can pick up exactly where the last one stopped. Companion doc:
 > `docs/plans/skill-optimization-plan.md` (the full 6-phase plan; Phase 6's original spec
