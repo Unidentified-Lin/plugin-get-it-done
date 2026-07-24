@@ -66,8 +66,9 @@ IF status == RUNNING (dispatcher is running or was interrupted last time):
     # Manual fallback (script unavailable): do the four sub-steps by hand — task_queue rollback
     # (claimed→pending, validating→executed, clear Claimed_by/Claimed_at, keep Validation
     # Results/Artifact/Attempts), clear milestone mval claims, clear open-RQ analyst claims, then
-    # rewrite the state.md YAML block to phase=AWAITING_HUMAN / status=WAITING / batch_id=null /
-    # batch_started_at=null / batch_ended_at=<now> / active_agents=[] / last_updated=<now>.
+    # rewrite the state.md YAML block to schema_version=2 / phase=AWAITING_HUMAN / status=WAITING /
+    # batch_id=null / batch_started_at=null / batch_ended_at=<now> / active_agents=[] /
+    # goal_set=<unchanged> / last_updated=<now>.
 
     Tell the user: 「前一輪 batch <paused_batch> 的 in-flight 標記已清理（claimed→pending、validating→executed）；那些 sub-agent 的結果若有崩潰中遺失將由 planner / 下一輪 executor 重新處理。」
     Continue on into Step 2 (Step 3 will later flip phase from AWAITING_HUMAN to PLANNING).
@@ -114,7 +115,7 @@ If Step 1 already forced hard (the COMPLETE path), skip straight to Step 3b.
    ```bash
    python3 "$GID_PY" reset-state --phase PLANNING --base "$GID_BASE"
    ```
-   (writes `phase: PLANNING`, `status: WAITING`, batch fields null, `active_agents: []`, `goal_set: true`, `last_updated: <now>`). Manual fallback: overwrite the YAML block by hand to those values, preserving everything below it.
+   (writes `schema_version: 2`, `phase: PLANNING`, `status: WAITING`, batch fields null, `active_agents: []`, `goal_set: true`, `last_updated: <now>`). Manual fallback: overwrite the YAML block by hand to those values, preserving everything below it.
 
 4. **Append to `.get-it-done/progress_log.md`**:
    ```bash
@@ -181,7 +182,7 @@ Confirm with the user: 「即將 hard 替換目標。task_queue.md、prd.md、fi
    ```bash
    python3 "$GID_PY" reset-state --phase PLANNING --base "$GID_BASE"
    ```
-   Manual fallback: overwrite the YAML block by hand to `phase: PLANNING` / `status: WAITING` / batch fields null / `active_agents: []` / `goal_set: true` / `last_updated: <now>`, preserving everything below it.
+   Manual fallback: overwrite the YAML block by hand to `schema_version: 2` / `phase: PLANNING` / `status: WAITING` / batch fields null / `active_agents: []` / `goal_set: true` / `last_updated: <now>`, preserving everything below it.
 
 5. **Append to `.get-it-done/progress_log.md`**:
    ```bash

@@ -51,7 +51,7 @@ If the file is pre-v2 (no `schema_version` or `schema_version < 2`), treat as re
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py" reset-state --phase PLANNING --clear-history --base "${GID_BASE:-.}"
 ```
 
-This writes `phase: PLANNING`, `status: WAITING`, all batch fields null, `active_agents: []`, `goal_set: true`, `last_updated: <now>`.
+This writes `schema_version: 2`, `phase: PLANNING`, `status: WAITING`, all batch fields null, `active_agents: []`, `goal_set: true`, `last_updated: <now>`.
 
 **Manual fallback** (script unavailable): overwrite the YAML block by hand to those values (preserving everything below it), and delete any `## Batch <id>` / `## Handoff` blocks from the bottom.
 
