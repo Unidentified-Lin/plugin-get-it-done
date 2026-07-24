@@ -157,8 +157,8 @@
 - [x] **Phase 4**：「Stage N」術語全數改寫（README + 5 個 agents/*.md + 4 個 templates/*.md + 2 個 agent_rules/*.md + continue/SKILL.md 系列，共 ~35 處；blueprint 的 `## Stage: <name>` pipeline 命名法為不同語意，予以保留）
 - [x] **Phase 4**：規則編號引用驗證 + 補出處（PR-009/012/013/019、RR-005 全數比對 agent_rules 定義，無 dangling reference）
 - [x] **Phase 4**：adjust SKILL 語言統一（使用者確認後翻譯為英文；user-facing 繁中字串逐一比對保留）。sub-agent 交叉驗證：Stage/標記清除為純刪除、無語意變更；adjust 翻譯後決策樹/YAML/bash 完全一致，9 條 user-facing 字串逐字保留。
-- [ ] **Phase 5**：gid.py 純邏輯單元測試
-- [ ] **Phase 5**：gid.py git 整合測試
+- [x] **Phase 5**：gid.py 純邏輯單元測試（parse_state、parse_task_queue 含 in_milestones 邊界回歸測試對應 commit 16db9d5、dag_violations 全分支、milestone_status 五態、cmd_pool P1-P4 優先序+Touches 碰撞+max_parallel 上限+batch 上限、batch-id、truncate-logs）
+- [x] **Phase 5**：gid.py git 整合測試（tempfile repo：goal-worktree-init→worktree-add→worktree-commit-wip→worktree-merge 含衝突路徑驗證 `{ok:false, reason:"conflict"}`→consolidate-milestone→goal-reset；worktree-gc 不誤刪 goal worktree）。共 47 個測試全綠（macOS，git 2.x），執行方式：`python3 -m unittest discover -s plugins/get-it-done/skills/continue/scripts/tests -p "test_*.py" -v`
 - [ ] **Phase 6**：gid.py 寫入子命令（claim-batch / persist-return / close-batch / log-append）
 - [ ] **Phase 6**：SKILL 讀取面收斂（禁止直接 Read state 檔，改吃 JSON）
 - [ ] **Phase 6**：state.md 拆檔（狀態 vs 說明文件分離）+ 引用同步更新
