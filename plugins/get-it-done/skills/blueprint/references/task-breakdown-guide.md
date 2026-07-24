@@ -108,21 +108,7 @@ Use `AskUserQuestion` / `ask_user` with choices:
 
 **After plan-reviewer PASS → Initialize get-it-done execution state:**
 
-Run bootstrap:
-```bash
-# macOS / Linux (Claude Code and GitHub Copilot)
-BOOTSTRAP="${CLAUDE_PLUGIN_ROOT}/skills/objective/scripts/bootstrap.py"   # Copilot: {plugin-root}/skills/objective/scripts/bootstrap.py
-PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.copilot/data/get-it-done}"
-python3 "$BOOTSTRAP" init --base "${GID_BASE:-.}" --plugin-data "$PLUGIN_DATA"
-```
-```powershell
-# Windows (GitHub Copilot — PowerShell)
-$PLUGIN_ROOT = if ($env:CLAUDE_PLUGIN_ROOT) { $env:CLAUDE_PLUGIN_ROOT } else {
-  Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-}
-$PLUGIN_DATA = if ($env:CLAUDE_PLUGIN_DATA) { $env:CLAUDE_PLUGIN_DATA } else { "$HOME\.copilot\data\get-it-done" }
-python "$PLUGIN_ROOT\skills\objective\scripts\bootstrap.py" init --base "." --plugin-data $PLUGIN_DATA
-```
+Run bootstrap: Read `../../../references/platform-adapter.md` §7 "`bootstrap.py init` invocation" and run the block matching your platform, with `--base "${GID_BASE:-.}"` (or `$env:GID_BASE` on Windows).
 
 Then write `.get-it-done/goal.md`:
 ```markdown

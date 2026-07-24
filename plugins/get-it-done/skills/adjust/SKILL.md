@@ -21,29 +21,13 @@ You are executing **/adjust**. 這是 user 在階段性開發過程中，發現�
 
 ```
 GID_PY := "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py"
-若本視窗已建立 GID_BASE → 沿用（用 python3 "$GID_PY" goals 驗證仍存在）。
-否則 python3 "$GID_PY" goals：0 → 若 repo root 有舊 .get-it-done/state.md 走單目標 back-compat（GID_BASE unset）；1 → 用它；≥2 → 詢問 user 要修訂哪個 slug。export GID_BASE。
 ```
+
+Read `../../references/gid-base.md` §"Resolve" and follow it, then `export GID_BASE`。
 
 ## Step 0: Bootstrap（防禦性、idempotent）
 
-**macOS / Linux (Claude Code and GitHub Copilot):**
-```bash
-BOOTSTRAP="${CLAUDE_PLUGIN_ROOT}/skills/objective/scripts/bootstrap.py"   # Copilot: {plugin-root}/skills/objective/scripts/bootstrap.py
-PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.copilot/data/get-it-done}"
-
-python3 "$BOOTSTRAP" init --base "${GID_BASE:-.}" --plugin-data "$PLUGIN_DATA"
-```
-
-**Windows (GitHub Copilot — PowerShell):**
-```powershell
-$PLUGIN_ROOT = if ($env:CLAUDE_PLUGIN_ROOT) { $env:CLAUDE_PLUGIN_ROOT } else {
-  Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-}
-$PLUGIN_DATA = if ($env:CLAUDE_PLUGIN_DATA) { $env:CLAUDE_PLUGIN_DATA } else { "$HOME\.copilot\data\get-it-done" }
-$BASE = if ($env:GID_BASE) { $env:GID_BASE } else { "." }
-python "$PLUGIN_ROOT\skills\objective\scripts\bootstrap.py" init --base $BASE --plugin-data $PLUGIN_DATA
-```
+Read `../../references/platform-adapter.md` §7 "`bootstrap.py init` invocation" and run the block matching your platform, with `--base "${GID_BASE:-.}"` (or `$env:GID_BASE` on Windows).
 
 若 bootstrap 後 `"$GID_BASE/.get-it-done/state.md"` 仍不存在，停止並提示 user 先用 `/objective <goal>` 初始化。
 

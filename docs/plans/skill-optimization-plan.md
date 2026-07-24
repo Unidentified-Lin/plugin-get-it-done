@@ -149,10 +149,10 @@
 - [x] **Phase 2**：plan audit gate 外移
 - [x] **Phase 2**：Copilot 平台備註歸位 platform-adapter
 - [x] **Phase 2**：確認 continue SKILL 外移內容零遺失（sub-agent 交叉驗證通過，逐行比對零缺漏）。⚠️ 行數 693→478（-31%），未達 ≤350 目標 — 該數字與計劃本身條列的搬移項目估算（693-228≈465）本就不符，屬計劃原始估計偏樂觀；未在 Phase 2 範圍內額外搬移 Step 2 crash recovery / Step 9 persist 決策表以硬湊行數，因兩者屬 dispatcher 專有邏輯（非與 gid.py 重複的手動程序），移動需等 Phase 6 腳本化後才有語意基礎。已回報使用者。
-- [ ] **Phase 3**：`references/gid-base.md` 建立 + 四處引用改寫
-- [ ] **Phase 3**：bootstrap 雙平台區塊歸位 platform-adapter §7
-- [ ] **Phase 3**：worktree 模型 canonical 化（state.md 為準，其餘摘要化）
-- [ ] **Phase 3**：關鍵句 grep 驗證單一來源
+- [x] **Phase 3**：`references/gid-base.md` 建立 + 四處引用改寫（continue/adjust 走 Resolve，objective/blueprint 走 Create）
+- [x] **Phase 3**：bootstrap 雙平台區塊歸位 platform-adapter §7（continue/adjust/objective 三處 + blueprint 的 task-breakdown-guide.md 共四處收斂）。⚠️ **意外發現並修正一個 P0 級 bug**：objective/SKILL.md 與 task-breakdown-guide.md 的 Windows PowerShell 區塊原本寫死 `--base "."`，未讀 `$env:GID_BASE`（adjust 的對應區塊原本是對的）——多目標模式下 Windows Copilot 執行 `/objective` 或 `/blueprint` 交接會把 bootstrap 寫到 repo root 而非目標 worktree，與 Phase 1 的 P0-1 同一類型。已在使用者確認後隨本 phase 一併修正（canonical 版本現在正確讀取 `$env:GID_BASE`）。
+- [x] **Phase 3**：worktree 模型 canonical 化（state.md 為準，其餘摘要化；main-flow.md 與 platform-adapter §9.5 均已縮為摘要 + 指向 state.md「Git isolation」）
+- [x] **Phase 3**：關鍵句 grep 驗證單一來源（sub-agent 交叉驗證通過；並額外抓到 task-breakdown-guide.md 殘留的第四份 bootstrap 副本，已一併收斂修正）
 - [ ] **Phase 4**：`[FIX ...]` / v1 對照標記清除
 - [ ] **Phase 4**：「Stage N」術語全數改寫
 - [ ] **Phase 4**：規則編號引用驗證 + 補出處

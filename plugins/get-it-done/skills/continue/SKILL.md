@@ -15,31 +15,11 @@ Spawnable sub-agents: `planner`, `analyst`, `executor`, `validator`, `reflector`
 
 ## GID_BASE — the active goal's worktree (multi-goal)
 
-Every goal runs in its **own git worktree** under `<repo>.gid-goals/<slug>/` (branch `gid/goal-<slug>`), which contains that goal's `.get-it-done/`. **`GID_BASE` = that worktree's absolute path.** This is how one repo-root window drives a chosen goal, and how multiple windows drive different goals at once.
-
-- **Every `.get-it-done/...` path in this skill is under `$GID_BASE/`** — read/write `"$GID_BASE/.get-it-done/..."`.
-- **Pass `--base "$GID_BASE"` to every `python3 "$GID_PY" <cmd>`** EXCEPT `git-preflight`, `goals`, and `goal-worktree-init` (those run at the repo root).
-- **Spawn sub-agents with `repo_root = $GID_BASE`** (their cwd / state home).
-- **Back-compat:** if `GID_BASE` is unset, base = repo root (legacy single-goal `.get-it-done/`). Everything still works.
-- **Terminology:** where steps below say "`_goal`" / "the goal worktree", that means **`$GID_BASE` itself** in multi-goal mode (the goal worktree IS the base; `gid.py` operates there via `--base`), or the legacy `.get-it-done/worktrees/_goal` in back-compat mode. Task worktrees are grouped siblings `<repo>.gid-goals/<slug>-<T>` whose `.get-it-done/` symlinks to `$GID_BASE/.get-it-done/`.
-
-**Resolving GID_BASE (do this first, before Step 0):**
-1. If this window already established `GID_BASE` (you set it earlier this session via `/objective` or a prior `/continue`) → reuse it. Validate it still appears in `python3 "$GID_PY" goals`; if gone, re-resolve.
-2. Else run `python3 "$GID_PY" goals`:
-   - **0 goals** → no isolated goals exist; if a legacy repo-root `.get-it-done/state.md` exists, run in single-goal back-compat (`GID_BASE` unset = repo root). Otherwise tell the user to run `/objective <goal>` and stop.
-   - **1 goal** → set `GID_BASE` = its `path`.
-   - **≥2 goals** → ask the user which goal (list the slugs) and set `GID_BASE` to the chosen `path`.
-3. `export GID_BASE="<path>"` so every command below inherits it.
+`GID_BASE` = the active goal's worktree absolute path (its own `.get-it-done/`); every `.get-it-done/...` path in this skill is under `$GID_BASE/`, and every `python3 "$GID_PY" <cmd>` (except `git-preflight`/`goals`/`goal-worktree-init`) takes `--base "$GID_BASE"`. Unset ⇒ back-compat single-goal at the repo root. **Resolve GID_BASE first, before Step 0**: Read `../../references/gid-base.md` §"Concept" and §"Resolve" and follow it, then `export GID_BASE="<path>"`.
 
 ## Step 0: Bootstrap (defensive, idempotent)
 
-```bash
-# Resolve paths (Claude Code: env vars set by harness; Copilot: discover from filesystem)
-BOOTSTRAP="${CLAUDE_PLUGIN_ROOT}/skills/objective/scripts/bootstrap.py"   # Copilot: {plugin-root}/skills/objective/scripts/bootstrap.py
-PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.copilot/data/get-it-done}"
-
-python3 "$BOOTSTRAP" init --base "${GID_BASE:-.}" --plugin-data "$PLUGIN_DATA"
-```
+Read `../../references/platform-adapter.md` §7 "`bootstrap.py init` invocation" and run the block matching your platform, with `--base "${GID_BASE:-.}"` (or `$env:GID_BASE` on Windows).
 
 `.get-it-done/workspace/` (per-sub-agent scratch) and `.get-it-done/findings/` (per-research-request findings) are sub-agent-owned write surfaces; the dispatcher creates the directories but never writes inside them.
 
