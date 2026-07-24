@@ -538,14 +538,372 @@ class TestDagCheckEndToEnd(unittest.TestCase):
         self.assertTrue(any("cycle" in v for v in out["violations"]))
 
 
+# =================================================== scripted state writes (Phase 6)
+
+STATE_FIXTURE = """# Team State
+```yaml
+schema_version: 2
+phase: EXECUTING
+status: WAITING
+batch_id: null
+batch_started_at: null
+batch_ended_at: null
+active_agents: []
+goal_set: true
+last_updated: null
+```
+
+## Phase Definitions
+_(spec prose below the YAML block — must be preserved verbatim across rewrites.)_
+"""
+
+FULL_TASK_TMPL = """### {id}: {title}
+- **Type**: {type}
+- **Status**: {status}
+- **Milestone**: {milestone}
+- **Dependencies**: []
+- **Touches**: {touches}
+- **Claimed_by**: null
+- **Claimed_at**: null
+- **Artifact**: null
+- **Attempts**: {attempts}
+- **Validation Results**: []
+- **Created**: 2026-01-01T00:00:00Z
+- **Updated**: 2026-01-01T00:00:00Z
+"""
+
+
+def full_task(id, title="t", type="docs", status="pending", touches="[]", attempts=0, milestone="M1"):
+    return FULL_TASK_TMPL.format(id=id, title=title, type=type, status=status,
+                                 touches=touches, attempts=attempts, milestone=milestone)
+
+
+def milestone_block(id="M1", title="First", tasks="[T-001]", pause_after=None):
+    b = ("### {id}: {title}\n- **Tasks**: {tasks}\n- **Claimed_by**: null\n"
+         "- **Claimed_at**: null\n- **ValidatorAttempts**: 0\n").format(
+        id=id, title=title, tasks=tasks)
+    if pause_after is not None:
+        b += "- **PauseAfter**: {p}\n- **PauseReason**: {r}\n".format(
+            p="true" if pause_after else "false", r=pause_after if isinstance(pause_after, str) else "null")
+    b += "- **Validation Results**: []\n"
+    return b
+
+
+def _fields(text, task_id):
+    """Parse one task/milestone back out of a written task_queue.md."""
+    tasks, milestones = gid.parse_task_queue(text)
+    return tasks.get(task_id) or milestones.get(task_id)
+
+
+class TestClaimBatch(unittest.TestCase):
+    def _project(self, tq):
+        return temp_project({
+            os.path.join(gid.GID_DIR, "state.md"): STATE_FIXTURE,
+            os.path.join(gid.GID_DIR, "task_queue.md"): tq,
+        })
+
+    def test_rewrites_state_and_preserves_spec(self):
+        tq = "## Tasks\n" + full_task("T-001")
+        with self._project(tq):
+            out = capture_json(gid.cmd_claim_batch, payload={
+                "batch": [{"role": "executor", "task_id": "T-001",
+                           "scratch": ".get-it-done/workspace/exec-T-001/"}],
+                "git_mode": "fallback", "max_parallel": 5})
+            self.assertEqual(out["batch_id"], "B0001")
+            st = gid.parse_state(gid.read(os.path.join(gid.GID_DIR, "state.md")))
+            self.assertEqual(st["status"], "RUNNING")
+            self.assertEqual(st["batch_id"], "B0001")
+            self.assertEqual(st["active_agent_count"], 1)
+            self.assertIsNotNone(st["batch_started_at"])
+            self.assertIsNone(st["batch_ended_at"])
+            raw = gid.read(os.path.join(gid.GID_DIR, "state.md"))
+            self.assertIn("Phase Definitions", raw, "spec prose below YAML must survive")
+            self.assertIn("must be preserved verbatim", raw)
+            self.assertTrue(os.path.isdir(".get-it-done/workspace/exec-T-001/"))
+
+    def test_claims_executor_validator_milestone(self):
+        tq = ("## Tasks\n" + full_task("T-001", status="pending")
+              + full_task("T-002", status="executed")
+              + "\n## Milestones\n" + milestone_block("M1", tasks="[T-001, T-002]"))
+        with self._project(tq):
+            capture_json(gid.cmd_claim_batch, payload={"batch": [
+                {"role": "executor", "task_id": "T-001", "scratch": ".get-it-done/workspace/exec-T-001/"},
+                {"role": "validator", "mode": "task", "task_id": "T-002"},
+                {"role": "validator", "mode": "milestone", "task_id": "M1"},
+            ], "git_mode": "fallback"})
+            text = gid.read(os.path.join(gid.GID_DIR, "task_queue.md"))
+            self.assertEqual(_fields(text, "T-001")["status"], "claimed")
+            self.assertEqual(_fields(text, "T-001")["claimed_by"], "exec-T-001")
+            self.assertEqual(_fields(text, "T-002")["status"], "validating")
+            self.assertEqual(_fields(text, "T-002")["claimed_by"], "val-T-002")
+            self.assertEqual(_fields(text, "M1")["claimed_by"], "mval-M1")
+
+    def test_analyst_claim_in_research_requests(self):
+        tq = "## Tasks\n" + full_task("T-001")
+        rr = ("# Research Requests\n\n### RQ-1\n- **Question**: q?\n"
+              "- **Status**: open\n- **Claimed_by**: null\n- **Claimed_at**: null\n")
+        with temp_project({
+            os.path.join(gid.GID_DIR, "state.md"): STATE_FIXTURE,
+            os.path.join(gid.GID_DIR, "task_queue.md"): tq,
+            os.path.join(gid.GID_DIR, "research_requests.md"): rr,
+        }):
+            capture_json(gid.cmd_claim_batch, payload={
+                "batch": [{"role": "analyst", "task_id": "RQ-1"}], "git_mode": "fallback"})
+            out = capture_json(gid.cmd_rqs)
+            self.assertIn("RQ-1", out["open_claimed"])
+
+
+class TestPersistReturnExecutor(unittest.TestCase):
+    def _project(self, tq):
+        return temp_project({
+            os.path.join(gid.GID_DIR, "state.md"): STATE_FIXTURE,
+            os.path.join(gid.GID_DIR, "task_queue.md"): tq,
+            os.path.join(gid.GID_DIR, "progress_log.md"): "# Progress Log\n",
+        })
+
+    def test_completed_sets_executed_and_increments_attempts(self):
+        tq = "## Tasks\n" + full_task("T-001", status="claimed", attempts=0)
+        with self._project(tq):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "executor", "task_id": "T-001", "git_mode": "fallback",
+                "return": {"status": "completed", "artifact": "a/result.md", "notes": "x"}})
+            self.assertEqual(out["status_after"], "executed")
+            t = _fields(gid.read(os.path.join(gid.GID_DIR, "task_queue.md")), "T-001")
+            self.assertEqual(t["status"], "executed")
+            self.assertEqual(t["attempts"], 1)
+            self.assertEqual(t["artifact"], "a/result.md")
+            self.assertIsNone(t["claimed_by"])
+
+    def test_failed_sets_blocked_and_drops_worktree(self):
+        tq = "## Tasks\n" + full_task("T-001", status="claimed", type="code", touches='["src/a.ts"]')
+        with self._project(tq):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "executor", "task_id": "T-001", "git_mode": "worktree",
+                "worktree_mode": "parallel",
+                "return": {"status": "failed", "notes": "cannot"}})
+            self.assertEqual(out["status_after"], "blocked")
+            self.assertIn("worktree-drop T-001 --keep-branch", out["next_actions"])
+            log = gid.read(os.path.join(gid.GID_DIR, "progress_log.md"))
+            self.assertIn("[BLOCKER] T-001", log)
+
+    def test_parallel_source_task_emits_commit_wip(self):
+        tq = "## Tasks\n" + full_task("T-001", status="claimed", type="code", touches='["src/a.ts"]')
+        with self._project(tq):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "executor", "task_id": "T-001", "git_mode": "worktree",
+                "worktree_mode": "parallel",
+                "return": {"status": "completed", "artifact": ""}})
+            self.assertIn("worktree-commit-wip T-001 --attempt 1", out["next_actions"])
+
+
+class TestPersistReturnValidator(unittest.TestCase):
+    def _project(self, tq):
+        return temp_project({
+            os.path.join(gid.GID_DIR, "state.md"): STATE_FIXTURE,
+            os.path.join(gid.GID_DIR, "task_queue.md"): tq,
+            os.path.join(gid.GID_DIR, "progress_log.md"): "# Progress Log\n",
+            os.path.join(gid.GID_DIR, "validation_log.md"): "# Validation Log\n",
+        })
+
+    def test_task_pass_sets_done_and_appends_parseable_vr(self):
+        tq = "## Tasks\n" + full_task("T-001", status="validating", attempts=1)
+        with self._project(tq):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "validator", "mode": "task", "task_id": "T-001", "git_mode": "fallback",
+                "return": {"verdict": "pass", "fail_reasons": [], "escalate_to_blocked": False,
+                           "notes": "ok"}})
+            self.assertEqual(out["status_after"], "done")
+            text = gid.read(os.path.join(gid.GID_DIR, "task_queue.md"))
+            t = _fields(text, "T-001")
+            self.assertEqual(t["status"], "done")
+            self.assertEqual(len(t["validation_results"]), 1)
+            self.assertEqual(t["validation_results"][0], {"attempt_no": 1, "verdict": "pass",
+                                                          "escalate_to_blocked": False})
+            vlog = gid.read(os.path.join(gid.GID_DIR, "validation_log.md"))
+            self.assertIn("VAL-0001", vlog)
+            self.assertIn("T-001", vlog)
+
+    def test_task_pass_parallel_source_returns_merge(self):
+        tq = "## Tasks\n" + full_task("T-001", status="validating", type="code",
+                                      touches='["src/a.ts"]', attempts=1)
+        with self._project(tq):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "validator", "mode": "task", "task_id": "T-001", "git_mode": "worktree",
+                "worktree_mode": "parallel",
+                "return": {"verdict": "pass", "escalate_to_blocked": False}})
+            self.assertIn("worktree-merge T-001", out["next_actions"])
+
+    def test_task_pass_sequential_source_returns_goal_commit(self):
+        tq = "## Tasks\n" + full_task("T-001", status="validating", type="code",
+                                      touches='["src/a.ts"]', attempts=1)
+        with self._project(tq):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "validator", "mode": "task", "task_id": "T-001", "git_mode": "worktree",
+                "worktree_mode": "sequential",
+                "return": {"verdict": "pass", "escalate_to_blocked": False}})
+            self.assertIn("goal-commit-task T-001", out["next_actions"])
+
+    def test_task_fail_sets_needs_rework(self):
+        tq = "## Tasks\n" + full_task("T-001", status="validating", attempts=1)
+        with self._project(tq):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "validator", "mode": "task", "task_id": "T-001", "git_mode": "fallback",
+                "return": {"verdict": "fail", "fail_reasons": ["criterion C2: x"],
+                           "escalate_to_blocked": False}})
+            self.assertEqual(out["status_after"], "needs_rework")
+            t = _fields(gid.read(os.path.join(gid.GID_DIR, "task_queue.md")), "T-001")
+            self.assertEqual(t["status"], "needs_rework")
+            self.assertIsNone(t["artifact"])
+
+    def test_task_fail_escalate_sets_blocked(self):
+        tq = "## Tasks\n" + full_task("T-001", status="validating", attempts=2)
+        with self._project(tq):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "validator", "mode": "task", "task_id": "T-001", "git_mode": "fallback",
+                "return": {"verdict": "fail", "escalate_to_blocked": True}})
+            self.assertEqual(out["status_after"], "blocked")
+            self.assertIn("[BLOCKER] T-001", gid.read(os.path.join(gid.GID_DIR, "progress_log.md")))
+
+    def test_validation_log_dedup_on_reattempt(self):
+        """Crash-recovery correctness: two persists of the same (task_id, attempt_no) must
+        append exactly ONE validation_log entry."""
+        tq = "## Tasks\n" + full_task("T-001", status="validating", attempts=1)
+        with self._project(tq):
+            payload = {"role": "validator", "mode": "task", "task_id": "T-001", "git_mode": "fallback",
+                       "return": {"verdict": "pass", "escalate_to_blocked": False}}
+            capture_json(gid.cmd_persist_return, payload=dict(payload))
+            out2 = capture_json(gid.cmd_persist_return, payload=dict(payload))
+            self.assertFalse(out2["validation_log"]["appended"])
+            self.assertEqual(out2["validation_log"]["reason"], "dedup")
+            vlog = gid.read(os.path.join(gid.GID_DIR, "validation_log.md"))
+            self.assertEqual(vlog.count("| T-001 | attempt=1 |"), 1)
+
+    def test_milestone_pass_returns_consolidate_and_pause(self):
+        tq = ("## Tasks\n" + full_task("T-001", status="done") + full_task("T-002", status="done")
+              + "\n## Milestones\n" + milestone_block("M1", tasks="[T-001, T-002]", pause_after="review UX"))
+        with self._project(tq):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "validator", "mode": "milestone", "task_id": "M1", "git_mode": "worktree",
+                "return": {"verdict": "pass", "escalate_to_blocked": False}})
+            self.assertEqual(out["status_after"], "validated")
+            self.assertIn("consolidate-milestone M1", out["next_actions"])
+            self.assertEqual(out["planned_pause"], {"milestone_id": "M1", "reason": "review UX"})
+            m = _fields(gid.read(os.path.join(gid.GID_DIR, "task_queue.md")), "M1")
+            self.assertEqual(m["validatorattempts"], "1")
+
+    def test_milestone_fail_with_rework_flips_tasks(self):
+        tq = ("## Tasks\n" + full_task("T-001", status="done") + full_task("T-002", status="done")
+              + "\n## Milestones\n" + milestone_block("M1", tasks="[T-001, T-002]"))
+        with self._project(tq):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "validator", "mode": "milestone", "task_id": "M1", "git_mode": "fallback",
+                "return": {"verdict": "fail", "escalate_to_blocked": False,
+                           "task_ids_to_rework": ["T-002"]}})
+            self.assertEqual(out["status_after"], "rework")
+            text = gid.read(os.path.join(gid.GID_DIR, "task_queue.md"))
+            self.assertEqual(_fields(text, "T-002")["status"], "needs_rework")
+            self.assertEqual(_fields(text, "T-001")["status"], "done")
+
+    def test_milestone_structural_fail_requests_awaiting_human(self):
+        tq = ("## Tasks\n" + full_task("T-001", status="done") + full_task("T-002", status="done")
+              + "\n## Milestones\n" + milestone_block("M1", tasks="[T-001, T-002]"))
+        with self._project(tq):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "validator", "mode": "milestone", "task_id": "M1", "git_mode": "fallback",
+                "return": {"verdict": "fail", "escalate_to_blocked": False, "task_ids_to_rework": []}})
+            self.assertEqual(out["status_after"], "structural_fail")
+            self.assertEqual(out["phase_request"], "AWAITING_HUMAN")
+            self.assertTrue(out["followups"])
+            self.assertIn("[BAD_MILESTONE]", gid.read(os.path.join(gid.GID_DIR, "progress_log.md")))
+
+
+class TestPersistReturnAnalystPlanner(unittest.TestCase):
+    def test_analyst_fulfilled_when_findings_exist(self):
+        rr = "# RR\n\n### RQ-1\n- **Status**: open\n- **Claimed_by**: analyst-RQ-1\n- **Claimed_at**: t\n"
+        with temp_project({
+            os.path.join(gid.GID_DIR, "research_requests.md"): rr,
+            os.path.join(gid.GID_DIR, "findings", "RQ-1.md"): "findings\n",
+            os.path.join(gid.GID_DIR, "progress_log.md"): "# P\n",
+        }):
+            out = capture_json(gid.cmd_persist_return, payload={"role": "analyst", "task_id": "RQ-1",
+                                                                "return": {"status": "completed"}})
+            self.assertEqual(out["status_after"], "fulfilled")
+            rout = capture_json(gid.cmd_rqs)
+            self.assertEqual(rout["rqs"][0]["status"], "fulfilled")
+            self.assertIsNone(rout["rqs"][0]["claimed_by"])
+
+    def test_analyst_missing_findings_is_bad_return(self):
+        rr = "# RR\n\n### RQ-1\n- **Status**: open\n- **Claimed_by**: analyst-RQ-1\n- **Claimed_at**: t\n"
+        with temp_project({
+            os.path.join(gid.GID_DIR, "research_requests.md"): rr,
+            os.path.join(gid.GID_DIR, "progress_log.md"): "# P\n",
+        }):
+            out = capture_json(gid.cmd_persist_return, payload={"role": "analyst", "task_id": "RQ-1",
+                                                                "return": {"status": "completed"}})
+            self.assertEqual(out["status_after"], "open")
+            self.assertTrue(out["followups"])
+
+    def test_planner_executing_requests_gate_followup(self):
+        with temp_project({os.path.join(gid.GID_DIR, "progress_log.md"): "# P\n"}):
+            out = capture_json(gid.cmd_persist_return, payload={
+                "role": "planner", "return": {"next_phase_request": "EXECUTING"}})
+            self.assertEqual(out["phase_request"], "EXECUTING")
+            self.assertTrue(any("plan-audit-gate" in f for f in out["followups"]))
+
+
+class TestCloseBatch(unittest.TestCase):
+    def test_closes_envelope_and_appends_history(self):
+        with temp_project({os.path.join(gid.GID_DIR, "state.md"): STATE_FIXTURE}):
+            gid.write_state_yaml({"status": "RUNNING", "batch_id": "B0007",
+                                  "batch_started_at": "2026-01-01T00:00:00Z"},
+                                 [{"role": "executor", "task_id": "T-001", "started_at": "t"}])
+            out = capture_json(gid.cmd_close_batch, payload={
+                "phase": "REPORTING",
+                "items": [{"role": "executor", "task_id": "T-001",
+                           "status_or_verdict": "completed", "artifact": "a/r.md"}],
+                "intent": "finalize"})
+            self.assertEqual(out["batch_id"], "B0007")
+            raw = gid.read(os.path.join(gid.GID_DIR, "state.md"))
+            st = gid.parse_state(raw)
+            self.assertEqual(st["status"], "WAITING")
+            self.assertEqual(st["phase"], "REPORTING")
+            self.assertEqual(st["active_agent_count"], 0)
+            self.assertIsNotNone(st["batch_ended_at"])
+            self.assertIn("## Batch B0007 —", raw)
+            self.assertIn("executor T-001 → completed", raw)
+            self.assertIn("intent: finalize", raw)
+            self.assertIn("Phase Definitions", raw, "spec prose preserved")
+            # batch-id derivation now sees the closed batch in history
+            self.assertEqual(gid.next_batch_id(), "B0008")
+
+
+class TestLogAppend(unittest.TestCase):
+    def test_append_and_dedup(self):
+        import sys as _sys
+        with temp_project({os.path.join(gid.GID_DIR, "progress_log.md"): "# P\n"}):
+            old = _sys.argv
+            try:
+                _sys.argv = ["gid.py", "log-append", "--file", "progress_log.md",
+                             "--line", "X [CRASH_DETECTED] batch=B1", "--dedup", "[CRASH_DETECTED] batch=B1"]
+                out1 = capture_json(gid.cmd_log_append)
+                self.assertTrue(out1["appended"])
+                out2 = capture_json(gid.cmd_log_append)
+                self.assertFalse(out2["appended"])
+            finally:
+                _sys.argv = old
+            log = gid.read(os.path.join(gid.GID_DIR, "progress_log.md"))
+            self.assertEqual(log.count("[CRASH_DETECTED] batch=B1"), 1)
+
+
 # ==================================================== git integration tests
 
 GIT_AVAILABLE = shutil.which("git") is not None
 
 
-def run_gid(args, cwd, env=None):
+def run_gid(args, cwd, env=None, stdin=None):
     p = subprocess.run([sys.executable, str(GID_PY)] + args, cwd=cwd,
-                       capture_output=True, text=True, env=env)
+                       capture_output=True, text=True, env=env,
+                       input=(json.dumps(stdin) if stdin is not None else None))
     try:
         data = json.loads(p.stdout) if p.stdout.strip() else None
     except json.JSONDecodeError:
@@ -716,6 +1074,69 @@ class TestGitIntegration(unittest.TestCase):
         self.assertTrue(data["is_git"])
         self.assertTrue(data["worktree_supported"])
         self.assertFalse(data["dirty"])
+
+    def test_claim_batch_parallel_then_persist_merge_roundtrip(self):
+        """Full scripted round-trip in a real repo: claim-batch assigns two parallel task
+        worktrees for two source executors, then persist-return's next_actions (worktree-merge)
+        actually merge each task's edit onto the goal branch."""
+        _, ginit, _, err = run_gid(["goal-worktree-init", "--slug", "testgoal"], cwd=self.repo)
+        self.assertTrue(ginit["ok"], err)
+        goal_wt = ginit["path"]
+        gid_dir = os.path.join(goal_wt, gid.GID_DIR)
+        os.makedirs(gid_dir, exist_ok=True)
+        with open(os.path.join(gid_dir, "state.md"), "w") as f:
+            f.write(STATE_FIXTURE)
+        for fn in ("progress_log.md", "validation_log.md"):
+            with open(os.path.join(gid_dir, fn), "w") as f:
+                f.write("# log\n")
+        tq = ("## Tasks\n"
+              + full_task("T-001", type="code", status="pending", touches='["a.txt"]', milestone="M1")
+              + full_task("T-002", type="code", status="pending", touches='["b.txt"]', milestone="M1")
+              + "\n## Milestones\n" + milestone_block("M1", tasks="[T-001, T-002]"))
+        with open(os.path.join(gid_dir, "task_queue.md"), "w") as f:
+            f.write(tq)
+
+        # claim-batch: two source executors → parallel task worktrees.
+        rc, cb, _, err = run_gid(["claim-batch", "--base", goal_wt], cwd=self.repo, stdin={
+            "batch": [
+                {"role": "executor", "task_id": "T-001", "scratch": ".get-it-done/workspace/exec-T-001/"},
+                {"role": "executor", "task_id": "T-002", "scratch": ".get-it-done/workspace/exec-T-002/"},
+            ], "git_mode": "worktree", "max_parallel": 5})
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(cb["parallel"], cb)
+        self.assertIn("T-001", cb["worktrees"])
+        self.assertIn("T-002", cb["worktrees"])
+
+        # each executor edits its own file in its own task worktree, then persist-return.
+        for tid, fn in (("T-001", "a.txt"), ("T-002", "b.txt")):
+            wt = cb["worktrees"][tid]
+            self.assertTrue(os.path.isdir(wt))
+            with open(os.path.join(wt, fn), "w") as f:
+                f.write("edited by %s\n" % tid)
+            rc, pe, _, err = run_gid(["persist-return", "--base", goal_wt], cwd=self.repo, stdin={
+                "role": "executor", "task_id": tid, "git_mode": "worktree", "worktree_mode": "parallel",
+                "return": {"status": "completed", "artifact": ""}})
+            self.assertEqual(rc, 0, err)
+            self.assertIn("worktree-commit-wip %s --attempt 1" % tid, pe["next_actions"])
+            for action in pe["next_actions"]:
+                rc, _, _, err = run_gid(action.split() + ["--base", goal_wt], cwd=self.repo)
+                self.assertEqual(rc, 0, err)
+
+        # validator passes each task → persist-return emits worktree-merge; run it.
+        for tid, fn in (("T-001", "a.txt"), ("T-002", "b.txt")):
+            rc, pv, _, err = run_gid(["persist-return", "--base", goal_wt], cwd=self.repo, stdin={
+                "role": "validator", "mode": "task", "task_id": tid, "git_mode": "worktree",
+                "worktree_mode": "parallel",
+                "return": {"verdict": "pass", "escalate_to_blocked": False}})
+            self.assertEqual(rc, 0, err)
+            self.assertIn("worktree-merge %s" % tid, pv["next_actions"])
+            rc, wm, _, err = run_gid(["worktree-merge", tid, "--base", goal_wt], cwd=self.repo)
+            self.assertEqual(rc, 0, err)
+            self.assertTrue(wm["ok"], wm)
+
+        # both edits are now on the goal branch's working tree.
+        for fn in ("a.txt", "b.txt"):
+            self.assertTrue(os.path.isfile(os.path.join(goal_wt, fn)), "%s merged onto goal" % fn)
 
 
 if __name__ == "__main__":
