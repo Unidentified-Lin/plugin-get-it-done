@@ -1,6 +1,6 @@
 # Plugin 優化調整計劃（SKILL 瘦身、去重複、用語修正）
 
-> 狀態：**Phase 1–5 已完成（各自獨立分支，等待使用者確認合併）；Phase 6 待下一個 session 執行**（架構風險最高、需要更多時間仔細驗證，2026-07-24 決定延後）
+> 狀態：**Phase 1–6 全部完成**（stacked 於 `feature/scripted-state-writes`，等待合併）。Phase 6 採 core-path 範圍（使用者 2026-07-25 選定），SKILL Step 6/9/10 與 objective/adjust 狀態寫入皆已腳本化；`/continue` 與 objective/adjust 的 prose 改寫均通過獨立 sub-agent 語意等價性複核；測試 47→72 全綠。
 > 來源：2026-07-24 plugin 全面評估（運作流程 / 架構 / SKILL 撰寫 / 檔案長度）
 > 原則：每個 Phase 一個分支、只 commit 不 push、合併需使用者確認、版本號僅在確認合回 master 時更新（依 CLAUDE.md）。
 > **Phase 1–4 為文件／指令內容調整，不得改變任何執行語意**（唯一例外：P0-1 是 bug 修正，語意「修正為原設計意圖」）。執行中若發現必須動到語意，停下來回報，不要自行決定。
@@ -159,11 +159,11 @@
 - [x] **Phase 4**：adjust SKILL 語言統一（使用者確認後翻譯為英文；user-facing 繁中字串逐一比對保留）。sub-agent 交叉驗證：Stage/標記清除為純刪除、無語意變更；adjust 翻譯後決策樹/YAML/bash 完全一致，9 條 user-facing 字串逐字保留。
 - [x] **Phase 5**：gid.py 純邏輯單元測試（parse_state、parse_task_queue 含 in_milestones 邊界回歸測試對應 commit 16db9d5、dag_violations 全分支、milestone_status 五態、cmd_pool P1-P4 優先序+Touches 碰撞+max_parallel 上限+batch 上限、batch-id、truncate-logs）
 - [x] **Phase 5**：gid.py git 整合測試（tempfile repo：goal-worktree-init→worktree-add→worktree-commit-wip→worktree-merge 含衝突路徑驗證 `{ok:false, reason:"conflict"}`→consolidate-milestone→goal-reset；worktree-gc 不誤刪 goal worktree）。共 47 個測試全綠（macOS，git 2.x），執行方式：`python3 -m unittest discover -s plugins/get-it-done/skills/continue/scripts/tests -p "test_*.py" -v`
-- [ ] **Phase 6**：gid.py 寫入子命令（claim-batch / persist-return / close-batch / log-append）
-- [ ] **Phase 6**：SKILL 讀取面收斂（禁止直接 Read state 檔，改吃 JSON）
-- [ ] **Phase 6**：state.md 拆檔（狀態 vs 說明文件分離）+ 引用同步更新
-- [ ] **Phase 6**：objective / adjust 的狀態寫入段落同步腳本化
-- [ ] **Phase 6**：Phase 5 測試擴充覆蓋新子命令
+- [x] **Phase 6**：gid.py 寫入子命令（claim-batch / persist-return / close-batch / log-append）— core-path 範圍；罕見 edge branch（TOUCHES_UNDERDECLARED、milestone 結構性失敗、多 PauseAfter）保留為文件化 followup。
+- [x] **Phase 6**：SKILL 讀取面收斂（Step 0.5 加入讀寫限制：改吃 `gid.py state`/`pool`/`rqs` JSON、經 claim/persist/close 寫入；例外為 manual fallback、Step 2 crash recovery、BAD_RETURN revert）
+- [x] **Phase 6**：state.md 拆檔（機器狀態 state.md ＝ YAML + `## Batch` 歷史；spec 移至新 `STATE_SPEC.md`）+ 8 檔引用同步更新
+- [x] **Phase 6**：objective / adjust 的狀態寫入段落同步腳本化（新增 `reset-state` / `rollback-claims`；含 /adjust Step 1 RUNNING-rollback）
+- [x] **Phase 6**：Phase 5 測試擴充覆蓋新子命令（+25，共 72 綠，含真實 git claim→persist→worktree-merge 來回）
 
 ## 執行順序與依賴
 
