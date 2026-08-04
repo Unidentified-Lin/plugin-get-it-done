@@ -206,6 +206,30 @@ $global:LASTEXITCODE = 0
 
 ⚠️ **robocopy exit-code gotcha**: robocopy returns **1–7 on success** (1 = files copied, 2 = extra files, etc.) and ≥8 only on real failure. `| Out-Null` does not reset `$LASTEXITCODE`, so a harness that treats non-zero as failure will mis-read a successful copy. Always follow robocopy with the `-ge 8` check + `$global:LASTEXITCODE = 0` normalization shown above.
 
+### `bootstrap.py init` invocation (canonical — used by `/objective` Step 0, `/adjust` Step 0, `/continue` Step 0)
+
+`bootstrap.py` wraps the rsync/robocopy logic above in a stdlib-only Python script so SKILL.md files don't need OS-specific branches beyond locating `python3`/`python` and `${CLAUDE_PLUGIN_ROOT}`:
+
+**macOS / Linux (Claude Code and GitHub Copilot):**
+```bash
+BOOTSTRAP="${CLAUDE_PLUGIN_ROOT}/skills/objective/scripts/bootstrap.py"   # Copilot: {plugin-root}/skills/objective/scripts/bootstrap.py
+PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.copilot/data/get-it-done}"
+
+python3 "$BOOTSTRAP" init --base "${GID_BASE:-.}" --plugin-data "$PLUGIN_DATA"
+```
+
+**Windows (GitHub Copilot — PowerShell):**
+```powershell
+$PLUGIN_ROOT = if ($env:CLAUDE_PLUGIN_ROOT) { $env:CLAUDE_PLUGIN_ROOT } else {
+  Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+}
+$PLUGIN_DATA = if ($env:CLAUDE_PLUGIN_DATA) { $env:CLAUDE_PLUGIN_DATA } else { "$HOME\.copilot\data\get-it-done" }
+$BASE = if ($env:GID_BASE) { $env:GID_BASE } else { "." }
+python "$PLUGIN_ROOT\skills\objective\scripts\bootstrap.py" init --base $BASE --plugin-data $PLUGIN_DATA
+```
+
+⚠️ **Always resolve `--base` from `$env:GID_BASE`** (fallback `.`) on every platform — hardcoding `"."` silently bootstraps into the repo root instead of the active goal's worktree in multi-goal mode.
+
 ---
 
 ## 8. Asking the User — sub-agent limitation
@@ -235,9 +259,9 @@ There is no Skill tool. Read the target skill's `SKILL.md` from the plugin root 
 
 ## 9.5. Git worktree operations + multi-goal (GID_BASE)
 
-Each goal runs in its **own git worktree** under `<repo>.gid-goals/<slug>/` (grouped sibling of the repo) on branch `gid/goal-<slug>` from the repo's HEAD. That worktree **contains its own real `.get-it-done/`** (hidden from git via the worktree's `info/exclude`). All the goal's source accumulates on `gid/goal-<slug>`; the user's own checkout/branch stays clean. **`GID_BASE` = the active goal's worktree path** — the dispatcher runs at the repo root but targets a goal by passing `--base "$GID_BASE"` to `gid.py` (which `os.chdir`s there). Multiple windows can each set a different `GID_BASE` and drive **concurrent goals** on one repo with no cross-session lock (separate worktrees + per-worktree git indexes; only the shared object/ref store, which is git-safe). `gid.py goals` lists active goals (from `git worktree list`); `gid.py goal-reset` clears one goal's task worktrees without touching others. **Back-compat:** `GID_BASE` unset ⇒ base = repo root ⇒ legacy single-goal `.get-it-done/` at the repo root (a `_goal` worktree under `.get-it-done/worktrees/`).
+> **Full model** (worktree layout, `GID_BASE`/multi-goal semantics, parallelism rules, per-goal/per-task worktree relationship, `git_state.json` fields, the milestone-consolidation invariant): canonical spec is `templates/.get-it-done/STATE_SPEC.md` § "Git isolation". This section covers only the **cross-platform operational differences** — how to call `gid.py`, and the OS-specific symlink mechanism.
 
-Parallelism is plan-driven: independent tasks (deps satisfied, non-overlapping `Touches`) run concurrently in **grouped-sibling task worktrees** `<repo>.gid-goals/<slug>-<T>` branched from the goal branch (up to `max_parallel` default 5 / `max_worktrees`); dependent or same-file tasks serialize automatically; a lone eligible task runs directly in the goal worktree. All git work is done by `gid.py` — the only cross-platform difference is the Python invocation (`python3` / `python` on Windows).
+All git work is done by `gid.py` — the only cross-platform difference in **invoking** it is the Python binary (`python3` / `python` on Windows).
 
 A **task** worktree's `.get-it-done/` is a **symlink** to the **goal** worktree's `.get-it-done/` (one shared copy per goal). Dependency dirs (`node_modules`, …) are linked so build/test run without reinstalling:
 - **macOS / Linux**: `os.symlink`.

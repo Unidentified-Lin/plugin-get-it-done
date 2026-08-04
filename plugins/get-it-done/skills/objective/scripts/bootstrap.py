@@ -42,6 +42,7 @@ PER_GOAL_RESET_FILES = [
     "task_queue.md",
     "metrics.md",
     "research_requests.md",
+    "STATE_SPEC.md",       # pure plugin-versioned spec (never user-edited) — refresh each goal
 ]
 
 

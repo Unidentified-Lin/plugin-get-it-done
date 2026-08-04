@@ -4,7 +4,7 @@ description: >-
   Sets a new business goal for the autonomous agent team and launches the first dispatcher cycle. Usage: /objective <goal description>. Bootstraps the project's .get-it-done/ workspace from plugin templates if missing, resets per-goal files, initializes v2 state schema (batch-aware), and starts the planning → execution → validation loop.
 ---
 
-You are executing **/objective**. This is how the user sets a business goal for the autonomous agent team. Both the v2 state schema (batch-aware) and the new agent-return YAML contract live in `.get-it-done/state.md` — read it after bootstrap if you need to refresh on the shapes.
+You are executing **/objective**. This is how the user sets a business goal for the autonomous agent team. The v2 state schema (batch-aware) is the YAML block in `.get-it-done/state.md`; the agent-return YAML contract and the rest of the spec (phases, transitions, crash recovery, git isolation) live in `.get-it-done/STATE_SPEC.md` — read them after bootstrap if you need to refresh on the shapes.
 
 ## Where state lives
 
@@ -21,43 +21,13 @@ Extract the goal from the user's message — everything after `/objective`. If e
 
 ## Step 0a: Create the goal worktree (multi-goal — establishes GID_BASE)
 
-Each goal runs in its **own git worktree** under `<repo>.gid-goals/<slug>/` so multiple goals can run concurrently from one repo-root window without colliding, and your own checkout stays clean.
-
-```
-GID_PY := "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py"
-preflight := python3 "$GID_PY" git-preflight              # at repo root
-slug := a short lowercase-hyphenated slug from the goal text (e.g. "add-login-flow"; keep <40 chars, unique)
-IF preflight.is_git AND preflight.worktree_supported:
-    result := python3 "$GID_PY" goal-worktree-init --slug "<slug>"   # creates <repo>.gid-goals/<slug> on gid/goal-<slug> from HEAD
-    export GID_BASE = result.path                       # absolute path to the goal worktree
-ELSE:
-    GID_BASE unset → single-goal back-compat at the repo root (non-git or no worktree support)
-```
-
-**GID_BASE = the active goal's worktree** (unset ⇒ repo root). For the rest of this skill: every `.get-it-done/...` path is under `"$GID_BASE/.get-it-done/..."`, and every `python3 "$GID_PY" <cmd>` (except `git-preflight`/`goals`/`goal-worktree-init`) takes `--base "$GID_BASE"`. Tell the user, at the end, that this goal lives in worktree `$GID_BASE` and runs independently of other goals/windows.
+Each goal runs in its **own git worktree** under `<repo>.gid-goals/<slug>/` so multiple goals can run concurrently from one repo-root window without colliding, and your own checkout stays clean. Read `../../references/gid-base.md` §"Create" and follow it to establish `GID_BASE`. Tell the user, at the end, that this goal lives in worktree `$GID_BASE` and runs independently of other goals/windows.
 
 ## Step 0: Bootstrap
 
 **When to use `/blueprint` first**: If the requirement is complex or ambiguous (needs interactive scope analysis, design decisions, impact assessment), consider running `/blueprint` first. `/blueprint` produces a frozen planning document and initializes `.get-it-done/` state automatically — you can then run `/continue` directly instead of `/objective`.
 
-**macOS / Linux (Claude Code and GitHub Copilot):**
-```bash
-# Resolve paths (Claude Code: env vars set by harness; Copilot: discover from filesystem)
-BOOTSTRAP="${CLAUDE_PLUGIN_ROOT}/skills/objective/scripts/bootstrap.py"   # Copilot: {plugin-root}/skills/objective/scripts/bootstrap.py
-PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.copilot/data/get-it-done}"
-
-python3 "$BOOTSTRAP" init --base "${GID_BASE:-.}" --plugin-data "$PLUGIN_DATA"
-```
-(`goal-worktree-init` already created `$GID_BASE/.get-it-done/git_state.json`; `init` preserves it via skip-existing logic.)
-
-**Windows (GitHub Copilot — PowerShell):**
-```powershell
-$PLUGIN_ROOT = if ($env:CLAUDE_PLUGIN_ROOT) { $env:CLAUDE_PLUGIN_ROOT } else {
-  Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-}
-$PLUGIN_DATA = if ($env:CLAUDE_PLUGIN_DATA) { $env:CLAUDE_PLUGIN_DATA } else { "$HOME\.copilot\data\get-it-done" }
-python "$PLUGIN_ROOT\skills\objective\scripts\bootstrap.py" init --base "." --plugin-data $PLUGIN_DATA
-```
+Read `../../references/platform-adapter.md` §7 "`bootstrap.py init` invocation" and run the block matching your platform, with `--base "${GID_BASE:-.}"` (or `$env:GID_BASE` on Windows). (`goal-worktree-init` already created `$GID_BASE/.get-it-done/git_state.json`; `init` preserves it via skip-existing logic.)
 
 `.get-it-done/workspace/` (per-executor scratch) and `.get-it-done/findings/` (per-analyst findings) are sub-agent write surfaces — bootstrap only creates the directory; sub-agents fill files.
 
@@ -75,21 +45,15 @@ If the file is pre-v2 (no `schema_version` or `schema_version < 2`), treat as re
 
 ## Step 2: Reset team state (v2 schema)
 
-Overwrite the YAML block at the top of `.get-it-done/state.md` (preserve everything below it — the State Machine docs, Phase Definitions, Transition Rules, batch lifecycle, agent-return contract):
+**Script path.** `reset-state` overwrites the state.md YAML block to a fresh planning state and, with `--clear-history`, strips any leftover `## Batch <id>` / legacy `## Handoff` blocks from a prior goal (a brand-new goal has no relevant history) while preserving the "Batch history" prose section. The spec prose lives in `.get-it-done/STATE_SPEC.md`, refreshed separately by `bootstrap.py reset` — do not touch it here.
 
-```yaml
-schema_version: 2
-phase: PLANNING
-status: WAITING
-batch_id: null
-batch_started_at: null
-batch_ended_at: null
-active_agents: []
-goal_set: true
-last_updated: <ISO timestamp>
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py" reset-state --phase PLANNING --clear-history --base "${GID_BASE:-.}"
 ```
 
-Also remove any leftover `## Batch <id>` blocks (or legacy `## Handoff` blocks) from prior goals at the bottom of state.md — they're stale and would confuse a future reader.
+This writes `schema_version: 2`, `phase: PLANNING`, `status: WAITING`, all batch fields null, `active_agents: []`, `goal_set: true`, `last_updated: <now>`.
+
+**Manual fallback** (script unavailable): overwrite the YAML block by hand to those values (preserving everything below it), and delete any `## Batch <id>` / `## Handoff` blocks from the bottom.
 
 ## Step 3: Write the goal
 
