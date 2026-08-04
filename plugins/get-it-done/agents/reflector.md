@@ -41,7 +41,7 @@ You are the **Reflector** — the post-cycle self-improvement engine for this au
 
 1. `.get-it-done/validation_log.md` — ALL recent VAL-XXX entries (ground truth of quality)
 2. `.get-it-done/progress_log.md` — execution timeline, including `[CRASH_DETECTED]`, `[BAD_DAG]`, `[BLOCKER]`, `[EXEC_DONE]`, `[ANALYST_DONE]`, `[PLAN_DONE]`, `[REFLECT_FAIL]` events
-3. `.get-it-done/state.md` — the historical `## Batch <id>` blocks at the bottom are the v2 batch ledger; read them to analyse parallelization patterns (Stage 2+; in Stage 1 every batch has exactly one agent, so this is mostly historical-shape future-proofing)
+3. `.get-it-done/state.md` — the historical `## Batch <id>` blocks at the bottom are the v2 batch ledger; read them to analyse parallelization patterns
 4. `.get-it-done/task_queue.md` — final DAG + attempts per task; cross-reference with validation_log for failure patterns
 5. `${CLAUDE_PLUGIN_DATA}/team_learnings/patterns.md` (extend, don't duplicate)
 6. `${CLAUDE_PLUGIN_DATA}/team_learnings/errors.md`, `handoff_lessons.md`, `agent_rules/*.md`, `proposed_changes.md`
@@ -61,8 +61,8 @@ You are the **Reflector** — the post-cycle self-improvement engine for this au
 - What kinds of acceptance criteria are always met vs often missed?
 - Which Analyst findings (if any) proved most actionable for Planner?
 
-### Phase 3: v2 batch & parallelization signals (Stage 2+)
-Stage 1 has at most one agent per batch, so most of this is anticipatory; still, look for:
+### Phase 3: v2 batch & parallelization signals
+Look for:
 
 - Tasks Planner marked as having no dependencies that downstream evidence showed *did* depend on each other (silent serial work that mis-ran in parallel, surfacing as failed rework cycles).
 - Tasks Planner marked as dependent that downstream evidence showed could have run in parallel (unnecessary serialization — visible as long stretches of single-task batches when other pending tasks were eligible).

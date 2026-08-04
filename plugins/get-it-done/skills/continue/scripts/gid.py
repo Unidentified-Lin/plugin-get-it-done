@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
 """gid.py — deterministic helper for the get-it-done dispatcher (/continue).
 
-Read-only derivation + log maintenance. The dispatcher (LLM) remains the only
-writer of task_queue.md / state.md; this script removes the error-prone
-computation steps (state parsing, DAG validation, milestone derivation, batch
-selection, log truncation) from the model's hands.
+Derivation + log maintenance + scripted state writes. Single-writer of the shared state
+files is preserved: for the mechanical batch-lifecycle steps the writer is now this script
+(driven by the dispatcher's sequential calls) instead of the dispatcher's Edit tool, which
+removes the error-prone bookkeeping (state parsing, DAG validation, milestone derivation,
+batch selection, claim/persist/close writes, log truncation) from the model's hands.
 
 Stdlib only (no PyYAML) — must run on any Python 3.8+ without installs.
 
-Subcommands (all emit JSON on stdout):
+Read / derivation subcommands (emit JSON on stdout):
   state          — parse the YAML block at the top of .get-it-done/state.md
   dag-check      — validate the task DAG (self-ref / orphan / cycle / touches overlap)
   pool           — derive milestone statuses + the prioritized actionable pool (Step 5)
   rqs            — parse research_requests.md entries (Status / Claimed_by)
   batch-id       — next monotonic batch id from state.md history
   truncate-logs  — archive + truncate progress_log.md / validation_log.md (writes files)
+
+Scripted state-write subcommands (Phase 6; JSON payload on stdin or --input <file>):
+  claim-batch    — Step 6: state.md YAML → RUNNING + active_agents; per-item claims; worktrees
+  persist-return — Step 9: persist ONE agent-return (task_queue/RQ/log writes) + next_actions
+  close-batch    — Step 10: state.md YAML → WAITING + batch history block
+  log-append     — generic deduped append to a .get-it-done log file
+  reset-state    — /objective Step 2 & /adjust Step 3: reset state.md YAML to a fresh phase
+  rollback-claims— /adjust Step 1: revert in-flight claims (reverse of claim-batch) → AWAITING_HUMAN
 
 Exit code 0 = ran cleanly (check JSON "ok"/"violations" fields for verdicts);
 exit code 2 = could not parse required files (dispatcher falls back to manual procedure).
@@ -108,14 +117,19 @@ def cmd_state():
     print(json.dumps(parse_state(text), ensure_ascii=False, indent=2))
 
 
-def cmd_batch_id():
+def next_batch_id():
+    """Next monotonic batch id over the ## Batch history + the current in-flight batch_id."""
     text = read(os.path.join(GID_DIR, "state.md")) or ""
     ids = [int(m) for m in re.findall(r"^##\s+Batch\s+B(\d+)", text, re.M)]
     cur = re.search(r"^batch_id:\s*[\"']?B(\d+)", text, re.M)
     if cur:
         ids.append(int(cur.group(1)))
     nxt = (max(ids) + 1) if ids else 1
-    print(json.dumps({"next_batch_id": "B%04d" % nxt}))
+    return "B%04d" % nxt
+
+
+def cmd_batch_id():
+    print(json.dumps({"next_batch_id": next_batch_id()}))
 
 
 # ------------------------------------------------------------ task_queue.md
@@ -855,9 +869,10 @@ def cmd_goal_commit_task(tid):
     print(json.dumps({"ok": True, "commit_sha": sha}))
 
 
-def cmd_worktree_add(tid):
+def _worktree_add(tid):
     """Parallel mode: a task worktree branched from the GOAL branch (not the user's HEAD),
-    with the shared-.get-it-done symlink. Idempotent."""
+    with the shared-.get-it-done symlink. Idempotent. Returns the result dict (does NOT print)
+    so callers like claim-batch can reuse it."""
     gs = load_git_state()
     path, branch = wt_path(tid), wt_branch(tid)
     base_ref = gs.get("goal_branch") or "HEAD"      # branch from the goal branch in goal mode
@@ -865,22 +880,24 @@ def cmd_worktree_add(tid):
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)   # gid_goals_root (sibling) or WT_ROOT
     if os.path.isdir(path):
         setup_shared_gid(path)
-        print(json.dumps({"ok": True, "path": path, "branch": branch, "reused": True}))
-        return
+        return {"ok": True, "path": path, "branch": branch, "reused": True}
     rcb, _, _ = run_git(["rev-parse", "--verify", "--quiet", branch])
     if rcb == 0:                                    # branch exists (blocked-retry / crash) → recreate WT
         rc, _, err = run_git(["worktree", "add", "--no-checkout", path, branch])
     else:                                           # first attempt → new branch + WT off the goal branch
         rc, _, err = run_git(["worktree", "add", "--no-checkout", "-b", branch, path, base_ref])
     if rc != 0:
-        print(json.dumps({"ok": False, "reason": err}))
-        return
+        return {"ok": False, "reason": err}
     steps = setup_shared_gid(path)
     linked = [d for d in gs.get("link_dirs", []) if link_one(d, path)]
     gs["worktrees"][tid] = {"branch": branch, "base": base_sha, "created": now_iso()}
     save_git_state(gs)
-    print(json.dumps({"ok": True, "path": path, "branch": branch, "base_sha": base_sha,
-                      "reused": False, "linked": linked, "shared_gid": steps}, ensure_ascii=False))
+    return {"ok": True, "path": path, "branch": branch, "base_sha": base_sha,
+            "reused": False, "linked": linked, "shared_gid": steps}
+
+
+def cmd_worktree_add(tid):
+    print(json.dumps(_worktree_add(tid), ensure_ascii=False))
 
 
 def cmd_worktree_commit_wip(tid, attempt):
@@ -1191,10 +1208,660 @@ def cmd_consolidate_final():
     _consolidate(base, subject, body or "goal milestones", "final")
 
 
+# ============================================================ scripted state writes
+# Phase 6: the dispatcher stops hand-editing state.md / task_queue.md / research_requests.md
+# for the mechanical batch-lifecycle steps (claim a batch, persist one return, close a batch)
+# and calls these instead. Single-writer is preserved — the writer just changes from the LLM's
+# Edit tool to these sequential script calls, still gated by the dispatcher's own logic.
+
+# ------------------------------------------------------- state.md YAML block rewrite
+
+_STATE_ORDER = ["schema_version", "phase", "status", "batch_id", "batch_started_at",
+                "batch_ended_at", "active_agents", "goal_set", "last_updated"]
+
+
+def _yaml_scalar(key, v):
+    if v is None:
+        return "null"
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    s = str(v)
+    if key == "batch_id":
+        return '"%s"' % s
+    return s
+
+
+def render_state_block(state, active_agents):
+    """Serialize the canonical state.md YAML block (inner content, no fences)."""
+    out = []
+    for key in _STATE_ORDER:
+        if key == "active_agents":
+            if active_agents:
+                out.append("active_agents:")
+                for a in active_agents:
+                    out.append("  - role: %s" % a["role"])
+                    if a.get("mode"):
+                        out.append("    mode: %s" % a["mode"])
+                    out.append("    task_id: %s" % _yaml_scalar("task_id", a.get("task_id")))
+                    out.append("    scratch: %s" % _yaml_scalar("scratch", a.get("scratch")))
+                    out.append("    started_at: %s" % _yaml_scalar("started_at", a.get("started_at")))
+            else:
+                out.append("active_agents: []")
+        else:
+            out.append("%s: %s" % (key, _yaml_scalar(key, state.get(key))))
+    return "\n".join(out)
+
+
+def write_state_yaml(updates, active_agents):
+    """Rewrite ONLY the fenced ```yaml block at the top of state.md, preserving everything
+    else (spec text, batch history). `updates` overrides current scalar fields; `active_agents`
+    is the full list to render (or [])."""
+    path = os.path.join(GID_DIR, "state.md")
+    text = read(path)
+    if text is None:
+        die("state.md not found")
+    cur = parse_state(text)
+    state = {k: cur.get(k) for k in _STATE_ORDER if k != "active_agents"}
+    state.update(updates)
+    if state.get("schema_version") is None:
+        state["schema_version"] = 2
+    block = render_state_block(state, active_agents)
+    m = re.search(r"```yaml\s*\n(.*?)```", text, re.S)
+    if not m:
+        die("state.md has no yaml block to rewrite")
+    new_text = text[:m.start()] + "```yaml\n" + block + "\n```" + text[m.end():]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(new_text)
+    return state
+
+
+# ------------------------------------------------------------------- log helpers
+
+def append_line(path, line):
+    """Append one line to a log file, guaranteeing newline separation."""
+    existing = read(path)
+    with open(path, "a", encoding="utf-8") as f:
+        if existing and not existing.endswith("\n"):
+            f.write("\n")
+        f.write(line.rstrip("\n") + "\n")
+
+
+def _progress(line):
+    append_line(os.path.join(GID_DIR, "progress_log.md"), line)
+
+
+def append_validation_entry(kind, item_id, attempt_no, verdict, notes=""):
+    """Append a monotonic VAL-XXXX / MVAL-XXXX line to validation_log.md, deduped on
+    (item_id, attempt_no) — the crash-recovery correctness guarantee (a re-spawn that lands
+    the same verdict on the same attempt must NOT double-append). kind: 'VAL' | 'MVAL'."""
+    path = os.path.join(GID_DIR, "validation_log.md")
+    text = read(path) or ""
+    dedup = re.compile(r"^%s-\d+ \| %s \| attempt=%s \|"
+                       % (kind, re.escape(str(item_id)), re.escape(str(attempt_no))), re.M)
+    if dedup.search(text):
+        return {"appended": False, "reason": "dedup", "key": "%s/%s" % (item_id, attempt_no)}
+    nums = [int(m) for m in re.findall(r"^%s-(\d+)" % kind, text, re.M)]
+    entry_id = "%s-%04d" % (kind, (max(nums) + 1) if nums else 1)
+    line = "%s | %s | attempt=%s | verdict=%s | at=%s" % (entry_id, item_id, attempt_no, verdict, now_iso())
+    note = (notes or "").replace("\n", " ").strip()
+    if note:
+        line += " | %s" % note
+    append_line(path, line)
+    return {"appended": True, "entry_id": entry_id}
+
+
+# ------------------------------------------------ task_queue.md / research_requests.md field edits
+
+def _to_int(v):
+    try:
+        return int(str(v).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
+def _write_lines(path, lines):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _entry_span(lines, entry_id):
+    """[start, end) line span of a `### <entry_id>` block (task, milestone, or RQ), ending at
+    the next `###`/`##` heading or EOF. Header may be `### T-003: title` or bare `### RQ-1`."""
+    hdr = re.compile(r"^###\s+" + re.escape(entry_id) + r"\b")
+    start = None
+    for i, ln in enumerate(lines):
+        if hdr.match(ln):
+            start = i
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if re.match(r"^##\s|^###\s", lines[j]):
+            end = j
+            break
+    return (start, end)
+
+
+def _get_field(lines, span, field):
+    pat = re.compile(r"^[\s>*-]*\*\*" + re.escape(field) + r"\*\*\s*:\s*(.*)$")
+    for i in range(span[0], span[1]):
+        m = pat.match(lines[i])
+        if m:
+            return m.group(1).strip()
+    return None
+
+
+def _set_field(lines, span, field, value):
+    pat = re.compile(r"^(?P<pre>[\s>*-]*\*\*" + re.escape(field) + r"\*\*\s*:\s*).*$")
+    for i in range(span[0], span[1]):
+        m = pat.match(lines[i])
+        if m:
+            lines[i] = m.group("pre") + value
+            return True
+    return False
+
+
+def _insert_field(lines, span, text):
+    lines[span[0] + 1:span[0] + 1] = [text]
+
+
+def _has_touches(lines, tid):
+    if lines is None:
+        return False
+    span = _entry_span(lines, tid)
+    if span is None:
+        return False
+    v = _get_field(lines, span, "Touches")
+    return bool(v and v.strip() not in ("[]", "", "null", "none"))
+
+
+def _vr_block(attempt_no, verdict, fail_reasons, escalate, notes, at, task_ids_to_rework=None):
+    """Build the indented Validation Results list-entry lines. Only attempt_no / verdict /
+    escalate_to_blocked are semantically re-parsed by parse_vr_entries; the rest is for humans
+    (fail_reasons quoted so they can never be misread as a yaml key)."""
+    L = ["  - attempt_no: %s" % attempt_no, "    verdict: %s" % verdict]
+    if fail_reasons:
+        L.append("    fail_reasons:")
+        for r in fail_reasons:
+            L.append('      - %s' % json.dumps(str(r), ensure_ascii=False))
+    else:
+        L.append("    fail_reasons: []")
+    if task_ids_to_rework is not None:
+        if task_ids_to_rework:
+            L.append("    task_ids_to_rework:")
+            for t in task_ids_to_rework:
+                L.append("      - %s" % t)
+        else:
+            L.append("    task_ids_to_rework: []")
+    L.append("    escalate_to_blocked: %s" % ("true" if escalate else "false"))
+    L.append("    notes: %s" % json.dumps((notes or "").replace("\n", " ").strip(), ensure_ascii=False))
+    L.append("    at: %s" % at)
+    return L
+
+
+def _append_vr(lines, span, vr_lines):
+    """Append a Validation Results entry inside the entry span, after any existing entries."""
+    s, e = span
+    pat = re.compile(r"^(?P<pre>[\s>*-]*\*\*Validation Results\*\*\s*:)\s*(?P<val>.*)$")
+    vr_idx = None
+    for i in range(s, e):
+        m = pat.match(lines[i])
+        if m:
+            vr_idx = i
+            if m.group("val").strip() in ("[]", "", "null"):
+                lines[i] = m.group("pre")            # drop the `[]` so the list can grow
+            break
+    if vr_idx is None:                               # no field present — add it at block end
+        lines[e:e] = ["- **Validation Results**:"] + vr_lines
+        return
+    ins = vr_idx + 1
+    while ins < e:
+        ln = lines[ins]
+        if ln.strip() == "":
+            break
+        if re.match(r"^[\s>*-]*\*\*[A-Za-z][\w ]*\*\*\s*:", ln):   # next field
+            break
+        if re.match(r"^#{2,3}\s", ln):
+            break
+        ins += 1
+    lines[ins:ins] = vr_lines
+
+
+# ---------------------------------------------------------------- claim-batch (Step 6)
+
+def cmd_claim_batch(payload=None):
+    """Atomically claim a batch: rewrite state.md YAML (status RUNNING, new batch_id,
+    active_agents), set per-item claims in task_queue.md / research_requests.md, and assign
+    task worktrees for parallel source executors. Echoes what it wrote so the dispatcher need
+    not re-read state.md."""
+    if payload is None:
+        payload = _payload()
+    now = now_iso()
+    batch = payload.get("batch", [])
+    git_mode = payload.get("git_mode", "fallback")
+    max_parallel = int(payload.get("max_parallel", 5))
+    bid = next_batch_id()
+
+    agents = []
+    for it in batch:
+        a = {"role": it["role"], "task_id": it.get("task_id"),
+             "scratch": it.get("scratch"), "started_at": now}
+        if it.get("mode"):
+            a["mode"] = it["mode"]
+        agents.append(a)
+    write_state_yaml({"status": "RUNNING", "batch_id": bid, "batch_started_at": now,
+                      "batch_ended_at": None, "last_updated": now}, agents)
+
+    tq_path = os.path.join(GID_DIR, "task_queue.md")
+    tq = read(tq_path)
+    lines = tq.splitlines() if tq is not None else None
+
+    src_execs = [it for it in batch
+                 if it["role"] == "executor" and _has_touches(lines, it.get("task_id"))]
+    parallel = git_mode == "worktree" and max_parallel > 1 and len(src_execs) >= 2
+
+    worktrees = {}
+    for it in batch:
+        role, tid = it["role"], it.get("task_id")
+        if lines is not None and role == "executor":
+            span = _entry_span(lines, tid)
+            if span:
+                _set_field(lines, span, "Status", "claimed")
+                _set_field(lines, span, "Claimed_by", "exec-%s" % tid)
+                _set_field(lines, span, "Claimed_at", now)
+            if it.get("scratch"):
+                os.makedirs(it["scratch"], exist_ok=True)
+            if git_mode == "worktree" and _has_touches(lines, tid):
+                if parallel:
+                    worktrees[tid] = _worktree_add(tid).get("path")
+                else:
+                    worktrees[tid] = os.path.abspath(goal_wt_path())   # goal worktree ($GID_BASE)
+        elif lines is not None and role == "validator" and it.get("mode") == "task":
+            span = _entry_span(lines, tid)
+            if span:
+                _set_field(lines, span, "Status", "validating")
+                _set_field(lines, span, "Claimed_by", "val-%s" % tid)
+                _set_field(lines, span, "Claimed_at", now)
+        elif lines is not None and role == "validator" and it.get("mode") == "milestone":
+            span = _entry_span(lines, tid)
+            if span:
+                _set_field(lines, span, "Claimed_by", "mval-%s" % tid)
+                _set_field(lines, span, "Claimed_at", now)
+    if lines is not None:
+        _write_lines(tq_path, lines)
+
+    analysts = [it for it in batch if it["role"] == "analyst"]
+    if analysts:
+        rr_path = os.path.join(GID_DIR, "research_requests.md")
+        rr = read(rr_path)
+        if rr is not None:
+            rlines = rr.splitlines()
+            for it in analysts:
+                rq = it.get("task_id")
+                span = _entry_span(rlines, rq)
+                if span:
+                    _set_field(rlines, span, "Claimed_by", "analyst-%s" % rq)
+                    _set_field(rlines, span, "Claimed_at", now)
+            _write_lines(rr_path, rlines)
+
+    print(json.dumps({"ok": True, "batch_id": bid, "active_agents": agents,
+                      "worktrees": worktrees, "parallel": parallel}, ensure_ascii=False))
+
+
+# ---------------------------------------------------------------- persist-return (Step 9)
+
+def cmd_persist_return(payload=None):
+    """Persist ONE well-formed agent-return: write the task_queue.md / research_requests.md
+    field updates + log appends for the core-path branches, and return `next_actions` (git
+    subcommands the dispatcher runs afterward) + optional signals (`phase_request`,
+    `planned_pause`, `followups` for the rare branches still handled by SKILL.md prose).
+    NEVER writes state.md (phase) — that stays with claim-batch / close-batch."""
+    if payload is None:
+        payload = _payload()
+    role = payload.get("role")
+    ret = payload.get("return") or {}
+    git_mode = payload.get("git_mode", "fallback")
+    wt_mode = payload.get("worktree_mode")            # "parallel" | "sequential" | None
+    now = now_iso()
+    out = {"ok": True, "next_actions": [], "followups": []}
+    tq_path = os.path.join(GID_DIR, "task_queue.md")
+
+    if role == "executor":
+        tid = payload.get("task_id")
+        tq = read(tq_path)
+        if tq is None:
+            die("task_queue.md not found")
+        lines = tq.splitlines()
+        span = _entry_span(lines, tid)
+        if span is None:
+            die("task %s not found" % tid)
+        attempts = _to_int(_get_field(lines, span, "Attempts")) + 1
+        _set_field(lines, span, "Attempts", str(attempts))
+        _set_field(lines, span, "Claimed_by", "null")
+        _set_field(lines, span, "Claimed_at", "null")
+        has_touches = _has_touches(lines, tid)
+        status = ret.get("status")
+        if status == "completed":
+            # `executed` fires on ANY completed return. The pre-Phase-6 prose gated this on
+            # `artifact present OR type in {code, config}` — but a completed non-code task with a
+            # null artifact then had no defined transition and stuck at `claimed` (an orphan once
+            # the claim was cleared). Advancing to `executed` unconditionally lets the per-task
+            # validator judge the (possibly empty) result instead of stranding it. Intentional,
+            # documented divergence — see manual-fallback.md §"Step 9 fallback".
+            artifact = ret.get("artifact") or ""
+            _set_field(lines, span, "Artifact", artifact if artifact else "null")
+            _set_field(lines, span, "Status", "executed")
+            out["status_after"] = "executed"
+            if git_mode == "worktree" and has_touches and wt_mode == "parallel":
+                out["next_actions"].append("worktree-commit-wip %s --attempt %s" % (tid, attempts))
+            elif git_mode == "worktree" and not has_touches:
+                out["followups"].append(
+                    "run check-stray-edits %s --revert; if dirty_source non-empty → "
+                    "TOUCHES_UNDERDECLARED (manual, see STATE_SPEC.md)" % tid)
+            _write_lines(tq_path, lines)
+            _progress("%s [EXEC_DONE] %s attempt=%s artifact=%s status=completed"
+                      % (now, tid, attempts, artifact or "(none)"))
+        else:                                         # failed | needs_clarification
+            _set_field(lines, span, "Status", "blocked")
+            _set_field(lines, span, "Artifact", "null")
+            out["status_after"] = "blocked"
+            _write_lines(tq_path, lines)
+            _progress("%s [BLOCKER] %s: %s" % (now, tid, ret.get("notes") or status))
+            _progress("%s [EXEC_DONE] %s attempt=%s status=%s" % (now, tid, attempts, status))
+            if git_mode == "worktree":
+                out["next_actions"].append("worktree-drop %s --keep-branch" % tid)
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    if role == "validator":
+        mode = payload.get("mode") or ret.get("mode") or "task"
+        verdict = ret.get("verdict")
+        escalate = bool(ret.get("escalate_to_blocked"))
+        fail_reasons = ret.get("fail_reasons") or []
+        notes = ret.get("notes") or ""
+        tq = read(tq_path)
+        if tq is None:
+            die("task_queue.md not found")
+        lines = tq.splitlines()
+
+        if mode == "task":
+            tid = payload.get("task_id")
+            span = _entry_span(lines, tid)
+            if span is None:
+                die("task %s not found" % tid)
+            attempt_no = _to_int(_get_field(lines, span, "Attempts"))
+            _set_field(lines, span, "Claimed_by", "null")
+            _set_field(lines, span, "Claimed_at", "null")
+            has_touches = _has_touches(lines, tid)
+            if verdict == "pass":
+                _set_field(lines, span, "Status", "done")
+                out["status_after"] = "done"
+                if git_mode == "worktree" and has_touches:
+                    if wt_mode == "parallel":
+                        out["next_actions"].append("worktree-merge %s" % tid)
+                        out["followups"].append(
+                            "if worktree-merge %s returns conflict → set %s needs_rework, clear "
+                            "Artifact, [MERGE_CONFLICT]" % (tid, tid))
+                    else:
+                        out["next_actions"].append("goal-commit-task %s" % tid)
+            elif verdict == "fail" and not escalate:
+                _set_field(lines, span, "Status", "needs_rework")
+                _set_field(lines, span, "Artifact", "null")
+                out["status_after"] = "needs_rework"
+            else:                                     # fail + escalate
+                _set_field(lines, span, "Status", "blocked")
+                out["status_after"] = "blocked"
+                if git_mode == "worktree":
+                    out["next_actions"].append("worktree-drop %s --keep-branch" % tid)
+            span = _entry_span(lines, tid)            # re-resolve before the length-changing insert
+            _append_vr(lines, span, _vr_block(attempt_no, verdict, fail_reasons, escalate, notes, now))
+            _write_lines(tq_path, lines)
+            out["validation_log"] = append_validation_entry("VAL", tid, attempt_no, verdict, notes)
+            if verdict == "fail" and escalate:
+                _progress("%s [BLOCKER] %s escalated by validator after %s attempts"
+                          % (now, tid, attempt_no))
+            print(json.dumps(out, ensure_ascii=False))
+            return
+
+        # mode == milestone
+        mid = payload.get("task_id")
+        span = _entry_span(lines, mid)
+        if span is None:
+            die("milestone %s not found" % mid)
+        va = _to_int(_get_field(lines, span, "ValidatorAttempts")) + 1
+        if not _set_field(lines, span, "ValidatorAttempts", str(va)):
+            _insert_field(lines, span, "- **ValidatorAttempts**: %s" % va)
+            span = _entry_span(lines, mid)
+        _set_field(lines, span, "Claimed_by", "null")
+        _set_field(lines, span, "Claimed_at", "null")
+        rework = ret.get("task_ids_to_rework") or []
+        if verdict == "pass":
+            out["status_after"] = "validated"
+            if git_mode == "worktree":
+                out["next_actions"].append("consolidate-milestone %s" % mid)
+            pause = _get_field(lines, span, "PauseAfter")
+            if pause and pause.strip().lower() == "true":
+                out["planned_pause"] = {"milestone_id": mid,
+                                        "reason": (_get_field(lines, span, "PauseReason") or "").strip()}
+        elif verdict == "fail" and not escalate and rework:
+            out["status_after"] = "rework"
+            out["rework_tasks"] = rework
+        elif verdict == "fail" and not escalate:      # structural failure (empty rework) — EDGE
+            out["status_after"] = "structural_fail"
+            out["phase_request"] = "AWAITING_HUMAN"
+            out["followups"].append(
+                "%s structural failure (no rework path) — manual: VR is preserved, set "
+                "phase=AWAITING_HUMAN, log [BAD_MILESTONE] (see STATE_SPEC.md)" % mid)
+        else:                                         # fail + escalate — EDGE
+            out["status_after"] = "blocked"
+            out["phase_request"] = "AWAITING_HUMAN"
+        span = _entry_span(lines, mid)                # re-resolve before length-changing insert
+        _append_vr(lines, span, _vr_block(va, verdict, fail_reasons, escalate, notes, now,
+                                          task_ids_to_rework=rework if verdict == "fail" else None))
+        if verdict == "fail" and not escalate and rework:
+            for t in rework:                          # tasks are in ## Tasks (earlier spans, unaffected)
+                tsp = _entry_span(lines, t)
+                if tsp:
+                    _set_field(lines, tsp, "Status", "needs_rework")
+                    _set_field(lines, tsp, "Artifact", "null")
+        _write_lines(tq_path, lines)
+        append_validation_entry("MVAL", mid, va, verdict, notes)
+        if verdict == "fail" and escalate:
+            _progress("%s [BLOCKER] %s escalated by milestone validator" % (now, mid))
+        if out.get("status_after") == "structural_fail":
+            _progress("%s [BAD_MILESTONE] %s structural fail (no rework path); awaiting human decision"
+                      % (now, mid))
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    if role == "analyst":
+        rq = payload.get("task_id") or payload.get("req_id")
+        rr_path = os.path.join(GID_DIR, "research_requests.md")
+        rr = read(rr_path)
+        if rr is None:
+            die("research_requests.md not found")
+        lines = rr.splitlines()
+        span = _entry_span(lines, rq)
+        if span is None:
+            die("RQ %s not found" % rq)
+        _set_field(lines, span, "Claimed_by", "null")
+        _set_field(lines, span, "Claimed_at", "null")
+        findings = os.path.join(GID_DIR, "findings", "%s.md" % rq)
+        if os.path.isfile(findings):
+            _set_field(lines, span, "Status", "fulfilled")
+            out["status_after"] = "fulfilled"
+            _write_lines(rr_path, lines)
+            _progress("%s [ANALYST_DONE] %s" % (now, rq))
+        else:
+            _set_field(lines, span, "Status", "open")
+            out["status_after"] = "open"
+            out["followups"].append("findings/%s.md missing → treat as BAD_RETURN, re-spawn" % rq)
+            _write_lines(rr_path, lines)
+            _progress("%s [BAD_RETURN] role=analyst task=%s reason=findings_missing" % (now, rq))
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    if role == "planner":
+        npr = ret.get("next_phase_request")
+        out["phase_request"] = npr
+        out["status_after"] = "planned"
+        if npr == "EXECUTING":
+            out["followups"].append(
+                "run plan-audit-gate (references/plan-audit-gate.md) BEFORE setting phase=EXECUTING")
+        _progress("%s [PLAN_DONE] next=%s" % (now, npr))
+        print(json.dumps(out, ensure_ascii=False))
+        return
+
+    die("persist-return: unknown role %s" % role)
+
+
+# ---------------------------------------------------------------- close-batch (Step 10)
+
+def cmd_close_batch(payload=None):
+    """Close the batch envelope: state.md → status WAITING, batch_ended_at now, active_agents [],
+    phase as decided; append a `## Batch <id>` history block to the bottom of state.md."""
+    if payload is None:
+        payload = _payload()
+    now = now_iso()
+    st_path = os.path.join(GID_DIR, "state.md")
+    text = read(st_path)
+    if text is None:
+        die("state.md not found")
+    cur = parse_state(text)
+    started = cur.get("batch_started_at")
+    bid = payload.get("batch_id") or cur.get("batch_id")
+    phase = payload.get("phase") or cur.get("phase")
+    write_state_yaml({"status": "WAITING", "batch_ended_at": now,
+                      "last_updated": now, "phase": phase}, [])
+    block = ["", "## Batch %s — %s → %s" % (bid, started, now)]
+    for it in payload.get("items", []):
+        block.append("- %s %s → %s, artifact: %s"
+                     % (it.get("role"), it.get("task_id"), it.get("status_or_verdict"),
+                        it.get("artifact") or "(none)"))
+    block.append("next_phase: %s" % phase)
+    block.append("intent: %s" % (payload.get("intent") or ""))
+    append_line(st_path, "\n".join(block))
+    print(json.dumps({"ok": True, "batch_id": bid}, ensure_ascii=False))
+
+
+# ------------------------------------------------ reset-state / rollback-claims (objective / adjust)
+
+def cmd_reset_state():
+    """Reset the state.md YAML block to a fresh single-phase state (used by /objective Step 2
+    and /adjust Steps 3a/3b). `--phase <P>` (default PLANNING). `--clear-history` also strips the
+    appended `## Batch <id>` / legacy `## Handoff` blocks from the bottom (objective wants a clean
+    slate; adjust preserves them). Everything else below the YAML block is preserved."""
+    phase = _flag("--phase", "PLANNING")
+    now = now_iso()
+    write_state_yaml({"phase": phase, "status": "WAITING", "batch_id": None,
+                      "batch_started_at": None, "batch_ended_at": None,
+                      "goal_set": True, "last_updated": now}, [])
+    stripped = 0
+    if "--clear-history" in sys.argv:
+        path = os.path.join(GID_DIR, "state.md")
+        text = read(path)
+        if text is not None:
+            lines = text.splitlines()
+            cut = None
+            for i, ln in enumerate(lines):
+                if re.match(r"^##\s+Batch\s+B\d+", ln) or re.match(r"^##\s+Handoff\b", ln):
+                    cut = i
+                    break
+            if cut is not None:
+                while cut > 0 and lines[cut - 1].strip() == "":   # drop blank lines before the block
+                    cut -= 1
+                stripped = len(lines) - cut
+                _write_lines(path, lines[:cut])
+    print(json.dumps({"ok": True, "phase": phase, "history_lines_stripped": stripped}))
+
+
+def cmd_rollback_claims():
+    """/adjust Step 1 RUNNING-rollback: the previous /continue crashed mid-batch and its
+    sub-agents can no longer return, so actively revert every in-flight claim (the REVERSE of
+    claim-batch) instead of leaving markers that never close. task_queue: claimed→pending,
+    validating→executed, clear claim (persisted Validation Results / Artifact / Attempts kept);
+    milestones: clear mval claims; research_requests: open+claimed RQs become reassignable.
+    Then park state at AWAITING_HUMAN (Step 3 flips it to PLANNING)."""
+    now = now_iso()
+    rolled = {"tasks": [], "milestones": [], "rqs": []}
+
+    tq_path = os.path.join(GID_DIR, "task_queue.md")
+    tq = read(tq_path)
+    if tq is not None:
+        lines = tq.splitlines()
+        tasks, milestones = parse_task_queue(tq)
+        for tid, t in tasks.items():
+            if not t.get("claimed_by"):
+                continue
+            span = _entry_span(lines, tid)
+            if span is None:
+                continue
+            if t.get("status") == "claimed":
+                _set_field(lines, span, "Status", "pending")
+            elif t.get("status") == "validating":
+                _set_field(lines, span, "Status", "executed")
+            _set_field(lines, span, "Claimed_by", "null")
+            _set_field(lines, span, "Claimed_at", "null")
+            rolled["tasks"].append(tid)
+        for mid, m in milestones.items():
+            if not m.get("claimed_by"):
+                continue
+            span = _entry_span(lines, mid)
+            if span:
+                _set_field(lines, span, "Claimed_by", "null")
+                _set_field(lines, span, "Claimed_at", "null")
+                rolled["milestones"].append(mid)
+        _write_lines(tq_path, lines)
+
+    rr_path = os.path.join(GID_DIR, "research_requests.md")
+    rr = read(rr_path)
+    if rr is not None:
+        rlines = rr.splitlines()
+        changed = False
+        for m in re.finditer(r"^###\s+(RQ-\w+)", rr, re.M):
+            span = _entry_span(rlines, m.group(1))
+            if span is None:
+                continue
+            claimed = _get_field(rlines, span, "Claimed_by")
+            if _get_field(rlines, span, "Status") == "open" and claimed and claimed != "null":
+                _set_field(rlines, span, "Claimed_by", "null")
+                _set_field(rlines, span, "Claimed_at", "null")
+                rolled["rqs"].append(m.group(1))
+                changed = True
+        if changed:
+            _write_lines(rr_path, rlines)
+
+    write_state_yaml({"phase": "AWAITING_HUMAN", "status": "WAITING", "batch_id": None,
+                      "batch_started_at": None, "batch_ended_at": now, "last_updated": now}, [])
+    print(json.dumps({"ok": True, "rolled_back": rolled}, ensure_ascii=False))
+
+
+# ---------------------------------------------------------------- log-append (generic)
+
+def cmd_log_append():
+    """Generic append to a .get-it-done log file, with optional `--dedup <substr>` skip.
+    Covers the crash-recovery / one-off progress_log lines the dispatcher still writes directly."""
+    fname = _flag("--file")
+    line = _flag("--line")
+    if not fname or line is None:
+        die("log-append requires --file <name> and --line <text>")
+    path = os.path.join(GID_DIR, os.path.basename(fname))
+    dedup = _flag("--dedup")
+    if dedup and dedup in (read(path) or ""):
+        print(json.dumps({"ok": True, "appended": False, "reason": "dedup"}))
+        return
+    append_line(path, line)
+    print(json.dumps({"ok": True, "appended": True}))
+
+
 # ---------------------------------------------------------------- arg helpers
 
 _VALUE_FLAGS = {"--base", "--slug", "--base-path", "--attempt",
-                "--git-mode", "--max-worktrees", "--max-parallel"}
+                "--git-mode", "--max-worktrees", "--max-parallel",
+                "--input", "--file", "--line", "--dedup", "--phase"}
 
 
 def _flag(name, default=None):
@@ -1220,6 +1887,24 @@ def _positional():
     return None
 
 
+def _payload():
+    """JSON payload for the write subcommands — from `--input <file>` or stdin."""
+    p = _flag("--input")
+    if p:
+        txt = read(p)
+        if txt is None:
+            die("--input file not found: %s" % p)
+        raw = txt
+    else:
+        raw = sys.stdin.read()
+    if not raw.strip():
+        return {}
+    try:
+        return json.loads(raw)
+    except ValueError as e:
+        die("invalid JSON payload: %s" % e)
+
+
 # ---------------------------------------------------------------- main
 
 # Subcommands that must run from the REPO ROOT (the goal worktree may not exist yet, or they
@@ -1232,7 +1917,9 @@ def main():
         die("usage: gid.py <state|dag-check|pool|rqs|batch-id|truncate-logs|git-preflight|goals|"
             "goal-worktree-init|goal-commit-task|goal-reset|worktree-add|worktree-commit-wip|"
             "worktree-merge|worktree-drop|worktree-gc|worktree-reset-all|check-stray-edits|"
-            "consolidate-milestone|consolidate-final|bside-dir>  [--base <goal-worktree>]")
+            "consolidate-milestone|consolidate-final|bside-dir|"
+            "claim-batch|persist-return|close-batch|log-append|reset-state|rollback-claims>  "
+            "[--base <goal-worktree>]")
     cmd = sys.argv[1]
 
     # Base switch: target a goal's worktree instead of cwd. Unset ⇒ base = cwd = repo root
@@ -1283,6 +1970,12 @@ def main():
         "worktree-reset-all": cmd_worktree_reset_all,
         "consolidate-final": cmd_consolidate_final,
         "bside-dir": cmd_bside_dir,
+        "claim-batch": cmd_claim_batch,
+        "persist-return": cmd_persist_return,
+        "close-batch": cmd_close_batch,
+        "log-append": cmd_log_append,
+        "reset-state": cmd_reset_state,
+        "rollback-claims": cmd_rollback_claims,
     }.get(cmd, lambda: die(f"unknown subcommand: {cmd}"))()
 
 

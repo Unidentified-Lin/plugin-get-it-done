@@ -12,7 +12,7 @@ description: >-
   Triggers on: "程式碼審查", "code review", "審查", "review", "review code",
   "review changes", "檢查程式碼品質", requests to check code before PR.
 
-  Do NOT trigger for planning requests — use /plan instead.
+  Do NOT trigger for planning requests — use /blueprint instead.
   Do NOT trigger for implementation requests — use /objective or /continue instead.
 ---
 

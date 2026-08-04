@@ -1,0 +1,155 @@
+# State Specification (get-it-done v2)
+
+_Read-only reference. This file holds the **specification** the team runs on — the state
+machine's phase/transition rules, the batch-lifecycle contract, the crash-recovery contract,
+the git-isolation model, and the **agent-return YAML contract** every sub-agent must emit. It
+never changes per project and no one writes to it at runtime (it is refreshed from the plugin
+template on each `/objective`). The **machine state** the dispatcher reads and writes every
+tick lives separately in `.get-it-done/state.md` (a small YAML block + batch history)._
+
+## `active_agents` entry schema
+
+The live batch's agents are recorded in `state.md`'s YAML block under `active_agents`:
+
+```yaml
+- role: executor             # executor | validator | analyst | planner | reflector
+  mode: null                 # validators: task | milestone; others: null
+  task_id: T-007             # task ID, milestone ID (e.g. M2), or req_id (analyst) — null for planner
+  scratch: .get-it-done/workspace/exec-T-007/    # executor-only; validator/analyst/planner: null
+  started_at: 2026-05-23T15:04:11Z
+```
+
+Parallelism: `1 <= len(active_agents) <= 5` while `status: RUNNING`. EXECUTING batches are heterogeneous — a single batch may mix per-task validators (`role: validator, mode: task`), milestone validators (`role: validator, mode: milestone`), rework executors, and new-pending executors. Planner remains N=1 (singleton); Analyst batches run in parallel, one per open RQ, up to N.
+
+## Phase Definitions
+
+| Phase | Description |
+|-------|-------------|
+| `IDLE` | No active goal. Waiting for `/objective`. |
+| `PLANNING` | Planner decomposing goal into a task DAG, writing PRD / metrics, optionally requesting research. |
+| `ANALYZING` | Dispatcher fans out one or more Analyst sub-agents (one per `research_request`). |
+| `EXECUTING` | Dispatcher mixes Executor / Validator / milestone-validator / rework Executors across batches until all tasks reach `done`. |
+| `REPORTING` | Dispatcher writes `[GOAL_COMPLETE]` summary and flips to `COMPLETE`. |
+| `COMPLETE` | All tasks `done`. Reflector may still be running independently; result does NOT gate completion. |
+| `AWAITING_HUMAN` | A blocker was raised (validator escalated to `blocked`, DAG malformed, dependency deadlock, planner explicit). |
+
+Reflector is **not** a phase; it runs once after `REPORTING → COMPLETE` as an independent post-cycle sub-agent.
+
+### Planned-pause soft EXIT
+
+`PLANNED_PAUSE` is **not** a phase — it is a *soft exit reason* the dispatcher writes to `progress_log.md` and then EXITs cleanly. It fires when a milestone validator returns `verdict: pass` for a milestone whose entry has `PauseAfter: true` (see `task_queue.md`). After the EXIT, `phase` stays at `EXECUTING` and `status` is `WAITING` (the batch close already ran). The user's next `/continue` resumes naturally on the next downstream milestone — no phase change required, no manual unblock needed.
+
+See planner rule `PR-019` for when planners may set `PauseAfter`.
+
+## Transition Rules
+
+```
+IDLE           → PLANNING        (goal_set = true)
+PLANNING       → ANALYZING       (planner emitted research_requests)
+ANALYZING      → PLANNING        (all analyst batches returned; planner re-runs)
+PLANNING       → EXECUTING       (task_queue ready, metrics ready, DAG validates)
+EXECUTING      → EXECUTING       (next batch — mix of executors, validators, reworks, milestone validators)
+EXECUTING      → EXECUTING (EXIT) (milestone validator passed a PauseAfter:true milestone → [PLANNED_PAUSE]; soft EXIT, next /continue resumes)
+EXECUTING      → REPORTING       (all tasks done AND all milestones validated)
+REPORTING      → COMPLETE        (dispatcher writes [GOAL_COMPLETE]; spawns reflector independently)
+COMPLETE       → IDLE            (cleared by next /objective)
+any            → AWAITING_HUMAN  (validator escalates blocked, DAG check fails, dependency deadlock, executor blocker)
+AWAITING_HUMAN → previous-phase  (human resolves block via state.md edit or new /objective)
+```
+
+## Batch lifecycle (dispatcher contract)
+
+The dispatcher (main session, via `/continue`) is the only writer of the shared state files. Since v2 (Phase 6) the **mechanical** writes are done by `gid.py` subcommands on the dispatcher's behalf — single-writer is preserved, the writer is just the script instead of the LLM's Edit tool. Per batch:
+
+1. **Plan the batch** — read machine state + task_queue via `gid.py state` / `pool` (JSON); pick up to N work items (N=1 for PLANNING's singleton planner; up to 5 for ANALYZING/EXECUTING).
+2. **Pre-write (atomic, before spawn)** — `gid.py claim-batch`: `status: RUNNING`, allocate next `batch_id`, fill `active_agents`, set `batch_started_at`, clear `batch_ended_at`, and set each item's `Claimed_by` / `Claimed_at` (and `Status: claimed`/`validating`). `Attempts` is NOT incremented yet — that happens on result.
+3. **Spawn sub-agents** in a single assistant message (parallel Task calls).
+4. **Collect results** — every sub-agent return MUST contain a `---agent-return---` … `---end---` fenced YAML block (contract below). Free-form prose outside that block is ignored by the dispatcher.
+5. **Persist results** — `gid.py persist-return` per return: update task_queue.md (Status, Artifact, Validation Results append, Attempts increment, clear Claimed_by/Claimed_at), append to validation_log.md / progress_log.md, and return the git `next_actions` the dispatcher then runs.
+6. **Close + decide next phase** — `gid.py close-batch`: write `batch_ended_at` + `status: WAITING` + `active_agents: []`, append a `## Batch <id>` block to `state.md`, and set `phase` (may stay EXECUTING, advance to REPORTING, fall back to PLANNING for rework escalations, or trip AWAITING_HUMAN).
+
+The full step-by-step procedure (with the exact `claim-batch` / `persist-return` / `close-batch` payloads and their manual fallbacks) is in `skills/continue/SKILL.md`.
+
+## Crash detection contract
+
+A crash is `status == RUNNING` AND `batch_ended_at == null`. On entry the dispatcher detects this with three sub-cases:
+
+**Sub-case 0: PLANNING singleton crash**
+- Condition: `phase == PLANNING` AND `status == RUNNING` AND `batch_ended_at == null`
+- Detection: Planner is N=1 (singleton) and never writes `Claimed_by` markers. Presence of RUNNING + PLANNING signals potential crash.
+- Recovery: If `batch_started_at` is recent (<5 min old), assume planner is still working; exit and retry `/continue` in ~30s. If stale (≥5 min), assume planner crashed mid-execution; reset phase back to `PLANNING`, set `status=WAITING`, append `[CRASH_DETECTED]` to progress_log, and exit so planner restarts on next tick.
+
+**Sub-case A: Sub-agent batch interrupted**
+- Condition: `status == RUNNING` AND `batch_ended_at == null` AND `claimed_set` is non-empty (where `claimed_set` = tasks/milestones/RQs with `Claimed_by != null`)
+- Recovery: Re-spawn **every item in claimed_set** using the same identifiers (task_id, scratch dir for executors, req_id for analysts). Re-spawn is safe because:
+  - Executor scratch dirs are keyed by `task_id` — re-runs overwrite their own files, never another task's.
+  - `Attempts` was NOT incremented before spawn, so re-spawn keeps the same attempt number.
+  - `validation_log.md` entries are dedup-keyed on `(task_id, attempt_no)` — a re-spawn that completes adds at most one new entry per task.
+  - Analyst findings files are per-RQ and overwrite cleanly; RQ stays `Status: open`.
+  - The dispatcher resets `batch_started_at` to the recovery time and resets `active_agents` to match the re-spawned set; old `batch_id` is reused.
+
+**Sub-case B: Batch close interrupted**
+- Condition: `status == RUNNING` AND `batch_ended_at == null` AND `claimed_set` is empty (work was persisted but batch envelope not closed)
+- Recovery: Clean up stale `Claimed_by` markers (especially fulfilled RQs with leftover `Claimed_by`), close the batch envelope, and proceed to next tick derivation.
+
+Old (pre-v2) state.md files without `schema_version` or `batch_id` are unmigrated. If `/continue` reads a v1 file, it emits an error pointing the user at `/objective` to reset and exits.
+
+## Git isolation (v2.3 — multi-goal worktree mode)
+
+When the project is a git repo, each goal runs in its **own worktree** `<repo>.gid-goals/<slug>/` (branch `gid/goal-<slug>` from the user's HEAD) that **contains its own `.get-it-done/`** (hidden from git via the worktree's `info/exclude`). The dispatcher runs at the repo root but targets a goal via **`GID_BASE`** (the goal worktree's path; `gid.py` takes `--base "$GID_BASE"`). Multiple windows can each set a different `GID_BASE` and drive **concurrent goals** on one repo — separate worktrees + per-worktree git indexes make this git-safe with no cross-session lock. **ALL the goal's source accumulates on `gid/goal-<slug>`** — the user's own branch and working tree stay clean. `GID_BASE` unset ⇒ back-compat single-goal at the repo root (a `_goal` worktree under `.get-it-done/worktrees/`).
+
+- **Parallel by default** — the **plan drives it**. Independent tasks (deps satisfied, same milestone, non-overlapping `Touches`) run **concurrently**, each in a **grouped-sibling task worktree** `<repo>.gid-goals/<slug>-<T>` branched from `gid/goal-<slug>`, squash-merged back on validator pass. `max_parallel` (default 5) / `max_worktrees` are ceilings.
+- **Sequential where the plan requires it** — dependent or same-file tasks serialize automatically. A lone eligible task runs directly in the goal worktree (no task worktree). Set `max_parallel: 1` for fully sequential.
+- A **task** worktree's `.get-it-done/` symlinks to the **goal** worktree's. On validator PASS the dispatcher commits each task as one commit on `gid/goal-<slug>`; executor + validator share that task's worktree. Task branches are slug-scoped (`gid/<slug>-<tid>`) so two concurrent goals never collide. (`.get-it-done/` is hidden from git via the shared `info/exclude` `/.get-it-done` — harmless because in multi-goal the repo root has no `.get-it-done/`. `node_modules` is NOT added to the shared exclude, so the user's own untracked files stay visible; `gid.py`'s scoped staging keeps both out of every commit regardless.)
+- Each validated milestone consolidates to **one commit on the goal branch** (`git reset --soft <milestone_base>`; no backup ref). At completion `gid/goal-<slug>` is left for the user to review/merge/PR — never auto-merged. `gid.py goals` lists active goals; `gid.py goal-reset` clears one goal's task worktrees without touching others. Non-git → direct edits.
+
+Git bookkeeping lives in **`.get-it-done/git_state.json`**, managed by `gid.py`. Its **config fields** may be tuned by the user — `commit_granularity` (`milestone`|`task`|`goal`), `max_worktrees`, `max_parallel` (concurrency ceiling; `1` = fully sequential), `link_dirs`. Its **live-state fields** are gid.py-owned, do NOT hand-edit: `git_mode`, `goal_slug`, `goal_branch`, `goal_base`, `milestone_bases`, and the `worktrees` map. `git_state.json`, `worktrees/`, `workspace/`, and `archive/` are git-ignored via `.get-it-done/.gitignore`.
+
+**Load-bearing invariant**: per-milestone commit consolidation (`git reset --soft <milestone_base>`) is exact **only because milestone gating keeps each milestone's commits contiguous on the goal branch** — a task in `M_k` never starts until `M_1..M_{k-1}` are validated. If that gate ever changes, the consolidation math breaks.
+
+## Agent-return YAML contract
+
+Every sub-agent (executor / validator / analyst — and planner when spawned by dispatcher) MUST end its run by emitting exactly one fenced YAML block of this shape (other prose may surround it but the dispatcher parses only between the two markers):
+
+```yaml
+---agent-return---
+role: executor                    # executor | validator | analyst | planner
+task_id: T-007                    # executor: T-XXX; validator: T-XXX or M-XXX; analyst: omit (use req_id instead); planner: omit
+status: completed                 # completed | failed | needs_clarification
+artifact: .get-it-done/workspace/exec-T-007/result.md   # path written by this sub-agent; "" if none
+notes: 一句到三句話的人類可讀摘要               # short; long prose belongs in the artifact
+
+# validator-only fields:
+mode: task                        # task | milestone (matches the mode in the spawn prompt)
+verdict: pass                     # pass | fail
+fail_reasons:                     # required when verdict == fail; each item maps to a metrics criterion id or PRD ref
+  - "criterion C2: button missing aria-label"
+escalate_to_blocked: false        # validator's signal that further rework is unlikely to converge
+# milestone-validator-only field (omit when mode: task):
+task_ids_to_rework:               # required when mode: milestone AND verdict: fail; tasks that need to be re-executed
+  - T-003                         # one entry per task whose work the milestone reviewer found defective in integration
+  - T-005                         # may be empty when the milestone failure is structural (then dispatcher falls back to PLANNING)
+
+# planner-only fields:
+next_phase_request: EXECUTING     # EXECUTING (DAG ready) | ANALYZING (research_requests written) | REPORTING (no work needed)
+research_request_ids: []          # populated when next_phase_request == ANALYZING
+
+# analyst-only fields (omit task_id for analysts; use req_id instead):
+req_id: RQ-1                      # required for analyst; replaces task_id
+---end---
+```
+
+The dispatcher rejects any return missing this block with `[BAD_RETURN]` in progress_log.md and treats the task as crashed (re-spawn on next tick).
+
+## Batch handoff log format
+
+Each completed batch appends a block to the bottom of `state.md` (written by `gid.py close-batch`):
+
+```markdown
+## Batch B0007 — 2026-05-23T15:04:11Z → 2026-05-23T15:06:42Z
+- executor T-007 → completed, artifact: .get-it-done/workspace/exec-T-007/result.md
+next_phase: EXECUTING
+intent: spawn validator T-007 next tick.
+```
+
+Sub-agents do NOT append to this log; the dispatcher (via `close-batch`) does. The dispatcher never reads these back — it derives the next batch from `task_queue.md` state alone; they are kept in `state.md` as a human- and Reflector-readable ledger of batch dynamics.

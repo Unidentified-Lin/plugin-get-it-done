@@ -3,164 +3,132 @@ name: adjust
 description: 修訂或具體化既有目標 — soft 為附加澄清/約束（保留 task_queue / prd / findings / workspace），hard 為重寫 Goal/Success（清空 planner artifacts）。兩種模式皆保留 progress_log、validation_log、.get-it-done/context 與 A-side learnings。Usage：/adjust <修訂訊息>。階段性開發中發現方向歪掉或需要更具體規格時使用。
 ---
 
-You are executing **/adjust**. 這是 user 在階段性開發過程中，發現方向需要修正或需求要更具體化時的入口。對比另外兩個入口：
+You are executing **/adjust** — the entry point the user reaches for during staged development, when the direction needs correcting or the requirement needs to be made more specific. Compare it with the other two entry points:
 
-- `/objective` — 設定全新目標、reset **所有** per-goal artifacts。
-- `/adjust` — 修訂目前 active goal、選擇性保留現有 planner artifacts。
-- `/continue` — dispatcher 主循環。
+- `/objective` — sets a brand-new goal, resets **all** per-goal artifacts.
+- `/adjust` — revises the current active goal, selectively preserving existing planner artifacts.
+- `/continue` — the dispatcher's main loop.
 
-`/adjust` 自己不會呼叫 `/continue` — 結束時告訴 user 準備好就執行 `/continue`，讓 planner 用新 goal re-plan。
+`/adjust` never calls `/continue` itself — at the end it tells the user to run `/continue` once ready, so planner re-plans against the new goal.
 
 ## Parse the message
 
-抽出 user 訊息中 `/adjust` 之後的內容。若為空，請 user 提供修訂訊息後停止。
+Extract the content after `/adjust` in the user's message. If empty, ask the user to provide a revision message and stop.
 
-## Step 0a: Resolve GID_BASE（要修訂哪個目標）
+## Step 0a: Resolve GID_BASE (which goal to revise)
 
-`GID_BASE` = 該目標的 worktree（`<repo>.gid-goals/<slug>`）。本 skill 後續所有 `.get-it-done/...` 路徑都在 `"$GID_BASE/.get-it-done/..."` 之下，所有 `python3 "$GID_PY" <cmd>`（除 `git-preflight`/`goals`/`goal-worktree-init`）都帶 `--base "$GID_BASE"`。
+`GID_BASE` = that goal's worktree (`<repo>.gid-goals/<slug>`). Every `.get-it-done/...` path in the rest of this skill is under `"$GID_BASE/.get-it-done/..."`, and every `python3 "$GID_PY" <cmd>` (except `git-preflight`/`goals`/`goal-worktree-init`) takes `--base "$GID_BASE"`.
 
 ```
 GID_PY := "${CLAUDE_PLUGIN_ROOT}/skills/continue/scripts/gid.py"
-若本視窗已建立 GID_BASE → 沿用（用 python3 "$GID_PY" goals 驗證仍存在）。
-否則 python3 "$GID_PY" goals：0 → 若 repo root 有舊 .get-it-done/state.md 走單目標 back-compat（GID_BASE unset）；1 → 用它；≥2 → 詢問 user 要修訂哪個 slug。export GID_BASE。
 ```
 
-## Step 0: Bootstrap（防禦性、idempotent）
+Read `../../references/gid-base.md` §"Resolve" and follow it, then `export GID_BASE`.
 
-**macOS / Linux (Claude Code and GitHub Copilot):**
-```bash
-BOOTSTRAP="${CLAUDE_PLUGIN_ROOT}/skills/objective/scripts/bootstrap.py"   # Copilot: {plugin-root}/skills/objective/scripts/bootstrap.py
-PLUGIN_DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.copilot/data/get-it-done}"
+## Step 0: Bootstrap (defensive, idempotent)
 
-python3 "$BOOTSTRAP" init --base "${GID_BASE:-.}" --plugin-data "$PLUGIN_DATA"
-```
+Read `../../references/platform-adapter.md` §7 "`bootstrap.py init` invocation" and run the block matching your platform, with `--base "${GID_BASE:-.}"` (or `$env:GID_BASE` on Windows).
 
-**Windows (GitHub Copilot — PowerShell):**
-```powershell
-$PLUGIN_ROOT = if ($env:CLAUDE_PLUGIN_ROOT) { $env:CLAUDE_PLUGIN_ROOT } else {
-  Get-ChildItem -Path "$HOME\.copilot" -Recurse -Directory -Filter "get-it-done" -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
-}
-$PLUGIN_DATA = if ($env:CLAUDE_PLUGIN_DATA) { $env:CLAUDE_PLUGIN_DATA } else { "$HOME\.copilot\data\get-it-done" }
-$BASE = if ($env:GID_BASE) { $env:GID_BASE } else { "." }
-python "$PLUGIN_ROOT\skills\objective\scripts\bootstrap.py" init --base $BASE --plugin-data $PLUGIN_DATA
-```
+If `"$GID_BASE/.get-it-done/state.md"` still doesn't exist after bootstrap, stop and tell the user to initialize with `/objective <goal>` first.
 
-若 bootstrap 後 `"$GID_BASE/.get-it-done/state.md"` 仍不存在，停止並提示 user 先用 `/objective <goal>` 初始化。
+## Step 1: Read state and decide whether to pause first
 
-## Step 1: 讀 state 並決定是否需要先暫停
-
-讀取 `.get-it-done/state.md` 頂部 YAML block。依據 `phase` / `status` 處理：
+Read the YAML block at the top of `.get-it-done/state.md`. Handle based on `phase` / `status`:
 
 ```
 IF phase == IDLE OR goal_set == false:
     EXIT — "目前沒有 active goal，無從修訂。請改用 /objective <goal> 設定新目標。"
 
 IF phase == COMPLETE:
-    詢問 user：「目標已完成。要重新打開並修訂嗎？這會走 hard 流程：清空 planner artifacts、保留 progress/validation log。」
-    若否 → EXIT；若是 → 強制走 hard 模式（跳過 Step 2 的 soft 選項）。
+    Ask the user: 「目標已完成。要重新打開並修訂嗎？這會走 hard 流程：清空 planner artifacts、保留 progress/validation log。」
+    If no → EXIT; if yes → force hard mode (skip the soft option in Step 2).
 
-IF status == RUNNING (dispatcher 正在跑或上次被中斷):
-    # 重要：/adjust 是同步使用者動作。若 status=RUNNING，代表前一輪 /continue 在
-    # spawn 階段崩潰 / 被 context 用盡截斷 / 被中斷。那些 sub-agents 的 return
-    # 已經無法被回收（他們的 session 結束了）。所以必須在這裡主動清掉 in-flight
-    # 標記，否則 task_queue 會留下永遠不會關閉的 Claimed_by — Step 3 之後 state
-    # 會切到 PLANNING/WAITING，下一次 /continue 的 Step 2 不會做 crash recovery
-    # （條件是 RUNNING），那些 claimed/validating 的 task 就會卡死。
+IF status == RUNNING (dispatcher is running or was interrupted last time):
+    # Important: /adjust is a synchronous user action. If status=RUNNING, the previous
+    # /continue crashed during spawn / was truncated by context exhaustion / was
+    # interrupted. Those sub-agents' returns can no longer be recovered (their sessions
+    # ended). So the in-flight markers MUST be actively cleared here, otherwise
+    # task_queue would be left with a Claimed_by that never closes — after Step 3 flips
+    # state to PLANNING/WAITING, the next /continue's Step 2 won't run crash recovery
+    # (its condition is RUNNING), and those claimed/validating tasks would be stuck forever.
     paused_batch := state.batch_id
-    append "<ISO> [ADJUST_PAUSE_REQUESTED] batch=<paused_batch> — user 透過 /adjust 介入；clearing in-flight claims" to progress_log.md
 
-    # 1. 回滾 task_queue.md：所有 in-flight task 都還原成 pre-claim 狀態。
-    FOR each task in task_queue.md WHERE Claimed_by != null:
-        IF task.Status == claimed:    set task.Status = pending     ; clear Claimed_by / Claimed_at
-        IF task.Status == validating: set task.Status = executed    ; clear Claimed_by / Claimed_at
-        (保留 Validation Results、Artifact、Attempts 等已持久化欄位)
+    # Script path: `rollback-claims` does the whole in-flight rollback deterministically —
+    # task_queue (claimed→pending, validating→executed, clear claim; persisted Validation
+    # Results / Artifact / Attempts kept), milestones (clear mval claims), research_requests
+    # (open+claimed RQs → reassignable), and parks state.md at phase=AWAITING_HUMAN,
+    # status=WAITING, batch_ended_at=now, active_agents=[] (goal_set unchanged). It echoes
+    # {rolled_back:{tasks,milestones,rqs}}.
+    python3 "$GID_PY" log-append --file progress_log.md --base "$GID_BASE" \
+        --line "<ISO> [ADJUST_PAUSE_REQUESTED] batch=<paused_batch> — user 透過 /adjust 介入；clearing in-flight claims"
+    rolled := python3 "$GID_PY" rollback-claims --base "$GID_BASE"
 
-    # 2. 回滾 milestone：清掉 mval-* claim（無其他 milestone 狀態要動）。
-    FOR each milestone in task_queue.md ## Milestones WHERE Claimed_by != null:
-        clear Claimed_by / Claimed_at
+    # Manual fallback (script unavailable): do the four sub-steps by hand — task_queue rollback
+    # (claimed→pending, validating→executed, clear Claimed_by/Claimed_at, keep Validation
+    # Results/Artifact/Attempts), clear milestone mval claims, clear open-RQ analyst claims, then
+    # rewrite the state.md YAML block to schema_version=2 / phase=AWAITING_HUMAN / status=WAITING /
+    # batch_id=null / batch_started_at=null / batch_ended_at=<now> / active_agents=[] /
+    # goal_set=<unchanged> / last_updated=<now>.
 
-    # 3. 回滾 research_requests.md：被 claim 但未完成的 RQ 回到可被重新指派。
-    FOR each RQ in research_requests.md WHERE Status == open AND Claimed_by != null:
-        clear Claimed_by / Claimed_at
-
-    # 4. 寫 state.md（明示完整 YAML，不要只覆寫部分欄位）：
-    rewrite state.md YAML block:
-        schema_version: 2
-        phase: AWAITING_HUMAN
-        status: WAITING
-        batch_id: null
-        batch_started_at: null
-        batch_ended_at: <ISO now>
-        active_agents: []
-        goal_set: <unchanged, usually true>
-        last_updated: <ISO now>
-
-    告知 user：「前一輪 batch <paused_batch> 的 in-flight 標記已清理（claimed→pending、validating→executed）；那些 sub-agent 的結果若有崩潰中遺失將由 planner / 下一輪 executor 重新處理。」
-    繼續往下走進入 Step 2（之後 Step 3 會把 phase 從 AWAITING_HUMAN 改為 PLANNING）。
+    Tell the user: 「前一輪 batch <paused_batch> 的 in-flight 標記已清理（claimed→pending、validating→executed）；那些 sub-agent 的結果若有崩潰中遺失將由 planner / 下一輪 executor 重新處理。」
+    Continue on into Step 2 (Step 3 will later flip phase from AWAITING_HUMAN to PLANNING).
 
 OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTING, AWAITING_HUMAN}):
-    直接進入 Step 2。
+    Proceed directly to Step 2.
 ```
 
-## Step 2: 決定模式（soft / hard）
+## Step 2: Decide the mode (soft / hard)
 
-讀 `.get-it-done/goal.md`，把現有的 `## Goal` / `## Context & Constraints` / `## Success Definition` 顯示給 user 看。
+Read `.get-it-done/goal.md`, show the user the existing `## Goal` / `## Context & Constraints` / `## Success Definition`.
 
-依據 user 訊息語意決定：
+Decide based on the semantics of the user's message:
 
-- **明確 pivot / 重寫**（關鍵字：「改成」「換方向」「pivot」「重新做」「目標改為」「另一個目標」）→ 走 hard。
-- **明確只是補規格 / 加 constraint**（關鍵字：「另外」「加上」「補充」「限制」「要求」「順便」「另外要求」「請確保」）→ 走 soft。
-- **模糊** → 用 `AskUserQuestion` 詢問：
+- **Clear pivot / rewrite** (keywords: 「改成」「換方向」「pivot」「重新做」「目標改為」「另一個目標」) → go hard.
+- **Clearly just adding spec / constraints** (keywords: 「另外」「加上」「補充」「限制」「要求」「順便」「另外要求」「請確保」) → go soft.
+- **Ambiguous** → ask via `AskUserQuestion`:
 
   > 「想要 soft 還是 hard 修訂？soft：在現有 goal.md 附加澄清/約束，保留 task_queue/prd/findings/workspace。hard：重寫 Goal/Success、清空 planner artifacts（同 /objective 的 reset，但保留 progress/validation log 與 context）。」
   >
   > 預設 soft（更安全）。
 
-若 Step 1 已強制 hard（COMPLETE 路徑），直接跳到 Step 3b。
+If Step 1 already forced hard (the COMPLETE path), skip straight to Step 3b.
 
-## Step 3a: Soft 路徑
+## Step 3a: Soft path
 
-1. **修訂 `.get-it-done/goal.md`**（使用 Edit，保留其他內容）：
-   - 在 `## Context & Constraints` 區段尾端 append bullet：`- (Refined <ISO>) <修訂內容摘要>`。原本為 `(none)` 或空 → 取代為新 bullet。
-   - 若 user 訊息有提到成功條件變更：在 `## Success Definition` 區段尾端 append `- (Refined <ISO>) <新成功條件>`。
-   - 若 `## Refinement History` 區段不存在，在檔案尾端新增：
+1. **Revise `.get-it-done/goal.md`** (use Edit, preserve other content):
+   - Append a bullet to the end of `## Context & Constraints`: `- (Refined <ISO>) <summary of the revision>`. If it was `(none)` or empty → replace with the new bullet.
+   - If the user's message mentions a change to success criteria: append `- (Refined <ISO>) <new success criteria>` to the end of `## Success Definition`.
+   - If the `## Refinement History` section doesn't exist, add at the end of the file:
 
      ```markdown
 
      ## Refinement History
 
-     - <ISO>: <user 訊息原文>
+     - <ISO>: <user's original message>
      ```
 
-     已存在 → append `- <ISO>: <user 訊息原文>` bullet。
+     If it already exists → append a `- <ISO>: <user's original message>` bullet.
 
-2. **保留** 以下檔案不變：`.get-it-done/task_queue.md`、`.get-it-done/prd.md`、`.get-it-done/research_requests.md`、`.get-it-done/findings/*`、`.get-it-done/workspace/*`、`.get-it-done/metrics.md`。
+2. **Preserve** the following files unchanged: `.get-it-done/task_queue.md`, `.get-it-done/prd.md`, `.get-it-done/research_requests.md`, `.get-it-done/findings/*`, `.get-it-done/workspace/*`, `.get-it-done/metrics.md`.
 
-3. **Rewrite `.get-it-done/state.md` YAML block**（保留 block 以下所有文件 + ## Batch 歷史）：
-   ```yaml
-   schema_version: 2
-   phase: PLANNING
-   status: WAITING
-   batch_id: null
-   batch_started_at: null
-   batch_ended_at: null
-   active_agents: []
-   goal_set: true
-   last_updated: <ISO now>
+3. **Reset the `.get-it-done/state.md` YAML block** to fresh PLANNING state, preserving the `## Batch` history (no `--clear-history` — this is the same goal, history stays):
+   ```bash
+   python3 "$GID_PY" reset-state --phase PLANNING --base "$GID_BASE"
+   ```
+   (writes `schema_version: 2`, `phase: PLANNING`, `status: WAITING`, batch fields null, `active_agents: []`, `goal_set: true`, `last_updated: <now>`). Manual fallback: overwrite the YAML block by hand to those values, preserving everything below it.
+
+4. **Append to `.get-it-done/progress_log.md`**:
+   ```bash
+   python3 "$GID_PY" log-append --file progress_log.md --base "$GID_BASE" --line "<ISO> [GOAL_REFINED] soft — <first 100 chars of the user's message>"
    ```
 
-4. **Append 到 `.get-it-done/progress_log.md`**：
-   ```
-   <ISO> [GOAL_REFINED] soft — <user 訊息前 100 字>
-   ```
+5. Skip to Step 4.
 
-5. 跳到 Step 4。
+## Step 3b: Hard path
 
-## Step 3b: Hard 路徑
+Confirm with the user: 「即將 hard 替換目標。task_queue.md、prd.md、findings、workspace 將被清空（progress_log、validation_log、context 保留）。確認嗎？」If no → EXIT.
 
-向 user 確認：「即將 hard 替換目標。task_queue.md、prd.md、findings、workspace 將被清空（progress_log、validation_log、context 保留）。確認嗎？」若否 → EXIT。
-
-1. **Overwrite `.get-it-done/goal.md`**（先讀舊檔抽出 prior Refinement History 條目以便保留累積）：
+1. **Overwrite `.get-it-done/goal.md`** (first read the old file to extract prior Refinement History entries, so they accumulate rather than being lost):
    ```markdown
    # Active Goal
 
@@ -168,13 +136,13 @@ OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTI
    Active — team is working on this goal (refined via /adjust at <ISO>).
 
    ## Goal
-   <user 訊息中的新 goal 內容>
+   <new goal content from the user's message>
 
    ## Context & Constraints
-   <若 user 訊息有給；否則 "None specified.">
+   <if given by the user; otherwise "None specified.">
 
    ## Success Definition
-   <若 user 訊息有給；否則從 goal 推導>
+   <if given by the user; otherwise derive from the goal>
 
    ## Set By
    Human (via /adjust — hard refinement)
@@ -183,26 +151,18 @@ OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTI
    <ISO now>
 
    ## Refinement History
-   <若舊 goal.md 已有 ## Refinement History 區段，把它底下所有現有 bullet 原樣保留在這裡>
-   - <ISO>: hard — <user 訊息原文>
+   <if the old goal.md already had a ## Refinement History section, preserve all its existing bullets here as-is>
+   - <ISO>: hard — <user's original message>
    ```
 
-   注意：先 Read 舊 goal.md 抽出 prior `## Refinement History` 區段的 bullets（若存在），整個 list 接在新區段下、再 append 本次 hard entry。避免每次 hard 覆寫都清空之前的修訂史。
+   Note: first Read the old goal.md to extract the prior `## Refinement History` section's bullets (if any), append them under the new section, then append this hard entry. This avoids wiping out prior refinement history on every hard overwrite.
 
-2. **重置 planner artifacts**（同 /objective Step 4 的指令）：
+2. **Reset planner artifacts** (same as `/objective` Step 4, unified via `bootstrap.py reset` — all paths are `--base`-relative to avoid relative-path mis-writes in multi-goal mode):
    ```bash
-   cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/task_queue.md" .get-it-done/task_queue.md
-   cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/metrics.md" .get-it-done/metrics.md
-   cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/research_requests.md" .get-it-done/research_requests.md
-   cp -f "${CLAUDE_PLUGIN_ROOT}/templates/.get-it-done/findings/_meta.md" .get-it-done/findings/_meta.md
-
-   find .get-it-done/findings -type f -name 'RQ-*.md' -delete
-
-   rm -rf .get-it-done/workspace
-   mkdir -p .get-it-done/workspace
-
-   B="${GID_BASE:-.}"
-   rm -f "$B/.get-it-done/prd.md" "$B/.get-it-done/plan_audit.md"
+   BOOTSTRAP="${CLAUDE_PLUGIN_ROOT}/skills/objective/scripts/bootstrap.py"   # Copilot: {plugin-root}/skills/objective/scripts/bootstrap.py
+   # Overwrites: force-copy task_queue.md / metrics.md / research_requests.md / findings/_meta.md,
+   # deletes findings/RQ-*.md, clears workspace/, removes prd.md and plan_audit.md
+   python3 "$BOOTSTRAP" reset --base "${GID_BASE:-.}"
 
    # hard reset is GOAL-SCOPED: clears THIS goal's task worktrees + gid/T-* branches (never other
    # goals), keeping the goal worktree itself + its branch. (soft does NOT reset.) Back-compat
@@ -214,31 +174,24 @@ OTHERWISE (status == WAITING, phase ∈ {PLANNING, ANALYZING, EXECUTING, REPORTI
    fi
    ```
 
-3. **不動**：`.get-it-done/progress_log.md`、`.get-it-done/validation_log.md`、`.get-it-done/context/*`、`${CLAUDE_PLUGIN_DATA}/team_learnings/*`、`.get-it-done/state.md` 中的 `## Batch` 歷史 block。
+3. **Leave untouched**: `.get-it-done/progress_log.md`, `.get-it-done/validation_log.md`, `.get-it-done/context/*`, `${CLAUDE_PLUGIN_DATA}/team_learnings/*`, and the `## Batch` history block inside `.get-it-done/state.md`.
 
-   注意：與 `/objective` 在這點上**刻意不同** — `/objective` 會刪除舊的 ## Batch 區塊（因為是全新目標、歷史無關），但 `/adjust` hard 是在同一個目標的脈絡下換方向，保留 batch 歷史以便追溯先前嘗試。
+   Note: this is **deliberately different** from `/objective` here — `/objective` deletes the old `## Batch` blocks (since it's a brand-new goal with irrelevant history), but `/adjust` hard is a direction change within the SAME goal's context, so batch history is preserved for tracing prior attempts.
 
-4. **Rewrite `.get-it-done/state.md` YAML block**：
-   ```yaml
-   schema_version: 2
-   phase: PLANNING
-   status: WAITING
-   batch_id: null
-   batch_started_at: null
-   batch_ended_at: null
-   active_agents: []
-   goal_set: true
-   last_updated: <ISO now>
+4. **Reset the `.get-it-done/state.md` YAML block** to fresh PLANNING state, preserving the `## Batch` history (no `--clear-history` — see step 3's note: same goal, history kept for tracing prior attempts):
+   ```bash
+   python3 "$GID_PY" reset-state --phase PLANNING --base "$GID_BASE"
+   ```
+   Manual fallback: overwrite the YAML block by hand to `schema_version: 2` / `phase: PLANNING` / `status: WAITING` / batch fields null / `active_agents: []` / `goal_set: true` / `last_updated: <now>`, preserving everything below it.
+
+5. **Append to `.get-it-done/progress_log.md`**:
+   ```bash
+   python3 "$GID_PY" log-append --file progress_log.md --base "$GID_BASE" --line "<ISO> [GOAL_REFINED] hard — <first 100 chars of the new goal>"
    ```
 
-5. **Append 到 `.get-it-done/progress_log.md`**：
-   ```
-   <ISO> [GOAL_REFINED] hard — <new goal 前 100 字>
-   ```
+## Step 4: Closing message (Traditional Chinese, user-facing)
 
-## Step 4: 收尾訊息（繁中）
-
-輸出簡短摘要：
+Output a short summary:
 
 ```
 目標已修訂（<soft|hard>）。
@@ -253,8 +206,8 @@ goal.md 變更：<soft: 新增 N 條 constraint / hard: 全文重寫>
 下一步：執行 /continue 讓 planner 依新 goal 重新規劃。
 ```
 
-## 設計備註
+## Design notes
 
-- 本 skill 是唯一寫者；遵循與 `/objective` 相同的契約 — 只有 dispatcher 與本 skill 可以動 `.get-it-done/state.md`、`.get-it-done/progress_log.md`、`.get-it-done/task_queue.md` 等 shared state。
-- Soft 模式刻意不替 planner 決定「哪些 task 要重做」— 那是 planner 的職責（planner.md 的 PR 規則涵蓋 replanning 邏輯）。Skill 只把 phase 切回 PLANNING、把新 constraint 寫進 goal.md，planner 在下次 /continue 自然會讀到。
-- RUNNING 路徑採 AWAITING_HUMAN 暫停（而非 ABORT）— 已 spawn 但未持久化的 sub-agent 結果，會在下次 /continue 的 Step 2 crash recovery 中被回收，不會無謂浪費。
+- This skill is the sole writer; it follows the same contract as `/objective` — only the dispatcher and this skill may touch shared state such as `.get-it-done/state.md`, `.get-it-done/progress_log.md`, `.get-it-done/task_queue.md`.
+- Soft mode deliberately does NOT decide, on Planner's behalf, "which tasks need to be redone" — that's Planner's job (planner.md's PR rules cover replanning logic). This skill only flips phase back to PLANNING and writes the new constraint into goal.md; Planner will naturally read it on the next `/continue`.
+- The RUNNING path pauses via AWAITING_HUMAN (rather than ABORT) — sub-agent results that were spawned but never persisted are recovered by the next `/continue`'s Step 2 crash recovery, so nothing is wasted needlessly.
