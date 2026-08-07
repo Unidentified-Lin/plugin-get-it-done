@@ -9,7 +9,7 @@ When Planner needs research before it can finalize the PRD or task DAG, it write
 ```markdown
 ### RQ-1
 - **Question**: <one or two sentences — the question Analyst must answer>
-- **Mode**: free | feature_landscape       # `feature_landscape` triggers the PR-009 protocol in analyst.md
+- **Mode**: free | feature_landscape       # `feature_landscape` triggers the PR-009 protocol in analyst.agent.md
 - **Success Criteria**:
   - <bullet of what a satisfying answer must contain>
 - **Depth**: shallow | medium | deep

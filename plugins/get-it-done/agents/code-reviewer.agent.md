@@ -8,7 +8,6 @@ description: >-
   tiered report: PASS, MINOR ISSUES (fix in-place), or MAJOR ISSUES (return to
   implementation for rework). Requires a clear scope — will ask if missing.
 model: sonnet
-tools: Read, Glob, Grep, Bash
 maxTurns: 20
 background: true
 ---
@@ -38,6 +37,8 @@ Your task prompt will include:
 Read both reference files before starting the review.
 
 ## Review Approach
+
+**You are read-only.** Report defects; never fix them yourself, and never modify a file under review. Use commands to inspect the diff and to build/test — not to edit.
 
 1. Obtain the diff using the scope from your task prompt:
    ```bash

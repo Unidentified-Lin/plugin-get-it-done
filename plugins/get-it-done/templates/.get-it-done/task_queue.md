@@ -79,7 +79,7 @@ Tasks may also carry a `Milestone:` field (e.g. `M1`). When all tasks in a **mul
 
 ## Webapp validation note
 
-For tasks with `Type: webapp`, validators run in browser-verification mode (Claude for Chrome). See `agents/validator.md` for the protocol; nothing about webapp validation changes the schema above.
+For tasks with `Type: webapp`, validators run in browser-verification mode (Claude for Chrome). See `agents/validator.agent.md` for the protocol; nothing about webapp validation changes the schema above.
 
 ## Milestones
 

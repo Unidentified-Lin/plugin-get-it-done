@@ -8,7 +8,6 @@ description: >-
   iteration by the /blueprint orchestrator; the orchestrator runs scope-verifier
   on the output (max 3 correction loops).
 model: sonnet
-tools: Read, Glob, Grep, Edit
 maxTurns: 30
 background: false
 ---
@@ -43,13 +42,13 @@ Read `scope-scanner-guide.md` first and follow it as your operational manual.
    - `impact-scope` (Impact Scope Inventory stage) — inventory all features/functions affected by planned changes
 3. **(Iteration ≥ 2)** Read the verifier issue list in your prompt AND the `<!-- scope-verifier(...) -->` annotations in the plan doc. Fix every Critical/Major issue; remove your stale annotations and re-annotate.
 4. **Analyze codebase** using `grep` and `glob` to locate classes, functions, callers, and references. Never assume file locations — always verify with search tools.
-5. **Update the planning document** with inventory results under the mode-specific section. Use `edit` tool only — never `create`.
+5. **Update the planning document** with inventory results under the mode-specific section. Edit the existing file in place — never create a new one.
 6. **Report back** — your final response must summarize what was inventoried (and, on iteration ≥ 2, which verifier issues you fixed and how). The orchestrator passes your output to scope-verifier.
 
 ## Hard Rules
 
 - **Never modify code files** — you are read-only for source code. Only update the planning document.
 - **Every listed class/function must have a verified file path** — no guessing. Confirm existence via `glob`/`grep` before writing.
-- **Always use `edit` tool** to update the planning document — never `create`.
+- **Always edit the planning document in place** — never create a replacement file.
 - **Add scanner annotations** with `<!-- scope-scanner: ... -->` HTML comments for verifier reference.
 - **Do not modify sections of the plan doc outside your responsibility** — stay within the section designated for your current mode.
