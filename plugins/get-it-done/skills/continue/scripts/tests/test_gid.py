@@ -28,6 +28,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 GID_PY = Path(__file__).resolve().parent.parent / "gid.py"
 
@@ -518,6 +519,90 @@ class TestTruncateLogs(unittest.TestCase):
             result = gid.truncate_one(os.path.join(gid.GID_DIR, "nope.md"), 400, 200,
                                       os.path.join(gid.GID_DIR, "archive"))
             self.assertEqual(result["skipped"], "missing")
+
+
+# ============================================================ atomic_write
+
+def _tmp_leftovers(d):
+    return [f for f in os.listdir(d) if f.startswith(".gid-tmp-")]
+
+
+class TestAtomicWrite(unittest.TestCase):
+    """Regression cover for issue #15: a state-file write that fails must leave the previous
+    content intact. The old `open(path, "w")` truncated the destination before writing, so a
+    mid-write UnicodeEncodeError emptied task_queue.md — the dispatcher's only task state."""
+
+    def test_lone_surrogate_is_escaped_not_raised(self):
+        # UTF-8 CAN encode ☐/☑ and emoji; the only thing it cannot encode is an unpaired
+        # surrogate (a split emoji, or a surrogateescape'd Windows path). That is the real
+        # trigger — a test using checkbox glyphs would pass without exercising the bug.
+        with temp_project({"a.md": "original\n"}) as d:
+            path = os.path.join(d, "a.md")
+            gid.atomic_write(path, "kept \ud83d line\n")
+            out = gid.read(path)
+            self.assertEqual(_tmp_leftovers(d), [])
+        self.assertIn("kept", out)
+        self.assertIn("line", out)
+        self.assertNotIn("\ud83d", out)
+
+    def test_write_lines_survives_lone_surrogate(self):
+        with temp_project({"q.md": "### T-001\n"}) as d:
+            path = os.path.join(d, "q.md")
+            gid._write_lines(path, ["### T-001", "- Notes: bad \udce9 byte", ""])
+            out = gid.read(path)
+        self.assertTrue(out.startswith("### T-001\n"))
+        self.assertIn("- Notes:", out)
+
+    def test_checkbox_glyphs_round_trip_unchanged(self):
+        with temp_project({"q.md": "old\n"}) as d:
+            path = os.path.join(d, "q.md")
+            gid._write_lines(path, ["☐ pending", "☑ done"])
+            out = gid.read(path)
+        self.assertEqual(out, "☐ pending\n☑ done\n")
+
+    def test_destination_untouched_when_rename_fails(self):
+        with temp_project({"q.md": "PREVIOUS\n"}) as d:
+            path = os.path.join(d, "q.md")
+            with mock.patch("os.replace", side_effect=OSError("boom")):
+                with self.assertRaises(OSError):
+                    gid.atomic_write(path, "NEW\n")
+            self.assertEqual(gid.read(path), "PREVIOUS\n")
+            self.assertEqual(_tmp_leftovers(d), [])
+
+    def test_rename_retries_transient_permission_error(self):
+        # Windows: the destination cannot be replaced while another handle is open on it.
+        real_replace = os.replace
+        calls = []
+
+        def flaky(src, dst):
+            calls.append(1)
+            if len(calls) < 3:
+                raise PermissionError("locked")
+            real_replace(src, dst)
+
+        with temp_project({"q.md": "old\n"}) as d:
+            path = os.path.join(d, "q.md")
+            with mock.patch("os.replace", flaky):
+                gid.atomic_write(path, "new\n")
+            self.assertEqual(gid.read(path), "new\n")
+            self.assertEqual(_tmp_leftovers(d), [])
+        self.assertEqual(len(calls), 3)
+
+    def test_temp_file_lands_beside_destination(self):
+        # rename is only atomic within one filesystem, and .get-it-done/ may be a junction.
+        seen = {}
+        real_mkstemp = tempfile.mkstemp
+
+        def spy(**kwargs):
+            seen["dir"] = kwargs.get("dir")
+            return real_mkstemp(**kwargs)
+
+        with temp_project() as d:
+            path = os.path.join(d, gid.GID_DIR, "state.md")
+            with mock.patch("tempfile.mkstemp", spy):
+                gid.atomic_write(path, "x\n")
+        self.assertEqual(os.path.normcase(seen["dir"]),
+                         os.path.normcase(os.path.dirname(os.path.abspath(path))))
 
 
 # =========================================================== dag-check e2e

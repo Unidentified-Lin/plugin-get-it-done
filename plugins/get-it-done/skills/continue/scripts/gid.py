@@ -36,6 +36,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 from datetime import datetime, timezone
 
 GID_DIR = ".get-it-done"
@@ -75,6 +77,51 @@ def read(path):
             return f.read()
     except OSError:
         return None
+
+
+def _replace_retry(src, dst, attempts=5):
+    """os.replace with a short backoff. On Windows the destination cannot be replaced while
+    another process holds a handle on it (antivirus, an editor, a stale reader), which surfaces
+    as PermissionError; a few retries clear the transient cases."""
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.05 * (i + 1))
+
+
+def atomic_write(path, text):
+    """Write `text` to `path` atomically — the ONLY way this script overwrites a state file.
+
+    Opening the destination in "w" mode truncates it before the first byte is written, so any
+    failure mid-write destroys the previous content with no way back (see issue #15: a single
+    UnicodeEncodeError emptied task_queue.md, the dispatcher's only task-state source). Writing
+    to a temp file in the SAME directory and then os.replace()-ing it means the destination is
+    either the old content or the new content, never a truncated hybrid. Same directory matters:
+    rename is only atomic within a filesystem, and .get-it-done/ may be a junction/symlink.
+
+    `errors="backslashreplace"` keeps a lone surrogate (\\ud800-\\udfff — what a split emoji or a
+    surrogateescape'd Windows path decodes to; UTF-8 cannot encode these) from aborting the write
+    at all: the offending char lands as an escape sequence instead of raising."""
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".gid-tmp-", suffix=".part")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", errors="backslashreplace") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        _replace_retry(tmp, path)
+        tmp = None
+    finally:
+        if tmp is not None:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
 
 
 def now_iso():
@@ -513,16 +560,15 @@ def truncate_one(path, cap, keep, archive_dir):
     os.makedirs(archive_dir, exist_ok=True)
     archive_path = os.path.join(archive_dir, os.path.basename(path))
     trimmed, kept = lines[:-keep], lines[-keep:]
-    with open(archive_path, "a", encoding="utf-8") as f:
+    with open(archive_path, "a", encoding="utf-8", errors="backslashreplace") as f:
         f.writelines(trimmed)
         if trimmed and not trimmed[-1].endswith("\n"):
             f.write("\n")
     marker = f"{now_iso()} [TRUNCATE] {os.path.basename(path)} from {len(lines)} to {keep} (archived to {archive_path})\n"
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(kept)
-        if kept and not kept[-1].endswith("\n"):
-            f.write("\n")
-        f.write(marker)
+    body = "".join(kept)
+    if kept and not kept[-1].endswith("\n"):
+        body += "\n"
+    atomic_write(path, body + marker)
     return {"file": path, "truncated_from": len(lines), "kept": keep, "archive": archive_path}
 
 
@@ -563,8 +609,7 @@ def load_git_state():
 
 def save_git_state(state):
     os.makedirs(GID_DIR, exist_ok=True)
-    with open(GIT_STATE_PATH, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
+    atomic_write(GIT_STATE_PATH, json.dumps(state, ensure_ascii=False, indent=2))
 
 
 def wt_path(tid):
@@ -761,8 +806,7 @@ def _write_goal_git_state(path, slug, branch, head):
     br = cur_branch or st.get("goal_branch") or branch
     st.update(goal_slug=st.get("goal_slug") or slug, goal_branch=br,
               goal_base=st.get("goal_base") or head)
-    with open(sp, "w", encoding="utf-8") as f:
-        json.dump(st, f, ensure_ascii=False, indent=2)
+    atomic_write(sp, json.dumps(st, ensure_ascii=False, indent=2))
     return br
 
 
@@ -1272,8 +1316,7 @@ def write_state_yaml(updates, active_agents):
     if not m:
         die("state.md has no yaml block to rewrite")
     new_text = text[:m.start()] + "```yaml\n" + block + "\n```" + text[m.end():]
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(new_text)
+    atomic_write(path, new_text)
     return state
 
 
@@ -1282,7 +1325,7 @@ def write_state_yaml(updates, active_agents):
 def append_line(path, line):
     """Append one line to a log file, guaranteeing newline separation."""
     existing = read(path)
-    with open(path, "a", encoding="utf-8") as f:
+    with open(path, "a", encoding="utf-8", errors="backslashreplace") as f:
         if existing and not existing.endswith("\n"):
             f.write("\n")
         f.write(line.rstrip("\n") + "\n")
@@ -1322,8 +1365,7 @@ def _to_int(v):
 
 
 def _write_lines(path, lines):
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines) + "\n")
+    atomic_write(path, "\n".join(lines) + "\n")
 
 
 def _entry_span(lines, entry_id):
