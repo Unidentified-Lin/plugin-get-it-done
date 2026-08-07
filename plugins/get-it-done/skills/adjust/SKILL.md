@@ -209,5 +209,5 @@ goal.md 變更：<soft: 新增 N 條 constraint / hard: 全文重寫>
 ## Design notes
 
 - This skill is the sole writer; it follows the same contract as `/objective` — only the dispatcher and this skill may touch shared state such as `.get-it-done/state.md`, `.get-it-done/progress_log.md`, `.get-it-done/task_queue.md`.
-- Soft mode deliberately does NOT decide, on Planner's behalf, "which tasks need to be redone" — that's Planner's job (planner.md's PR rules cover replanning logic). This skill only flips phase back to PLANNING and writes the new constraint into goal.md; Planner will naturally read it on the next `/continue`.
+- Soft mode deliberately does NOT decide, on Planner's behalf, "which tasks need to be redone" — that's Planner's job (planner.agent.md's PR rules cover replanning logic). This skill only flips phase back to PLANNING and writes the new constraint into goal.md; Planner will naturally read it on the next `/continue`.
 - The RUNNING path pauses via AWAITING_HUMAN (rather than ABORT) — sub-agent results that were spawned but never persisted are recovered by the next `/continue`'s Step 2 crash recovery, so nothing is wasted needlessly.

@@ -128,7 +128,7 @@ Reflector 對每一條新學習問同一個問題：
 > - **否** → B 側（專案專屬），寫進 `<project>/.get-it-done/context/`
 > - **不確定** → 預設 B，之後在另一個無關專案再見到就升 A
 
-完整決策矩陣在 `agents/reflector.md` 中。
+完整決策矩陣在 `agents/reflector.agent.md` 中。
 
 ## Bootstrap 機制
 
@@ -193,7 +193,7 @@ ls "$CLAUDE_PLUGIN_DATA/team_learnings/agent_rules/"    # 跨專案規則
 ```
 plugins/get-it-done/
 ├── .claude-plugin/plugin.json
-├── agents/{planner,analyst,executor,validator,reflector}.md
+├── agents/{planner,analyst,executor,validator,reflector}.agent.md
 ├── skills/
 │   ├── blueprint/SKILL.md
 │   ├── objective/SKILL.md

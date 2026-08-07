@@ -82,27 +82,10 @@ Multiple `Agent` calls in ONE assistant message run in parallel and return toget
 ### GitHub Copilot CLI
 Copilot CLI delegates to a **custom subagent** (its own context; result returns to the parent) — but ONLY when the agent is **discoverable as a Copilot custom agent** AND you **delegate to it by name**. If either is missing, Copilot runs the work **inline** (the bug to avoid).
 
-**(a) Make the agents discoverable (one-time, at bootstrap).** Copilot custom agents live in `~/.copilot/agents/` (user) or `.github/agents/` (project) as `*.agent.md`. The plugin ships its agents under `<plugin-root>/agents/`; mirror them into a Copilot agents dir with the `.agent.md` suffix:
-```bash
-# macOS / Linux — run once per machine (idempotent)
-mkdir -p "$HOME/.copilot/agents"
-for f in "<plugin-root>"/agents/*.md; do
-  base="$(basename "$f" .md)"; base="${base%.agent}"
-  ln -sf "$f" "$HOME/.copilot/agents/get-it-done-$base.agent.md"
-done
-```
-```powershell
-# Windows
-New-Item -ItemType Directory -Force "$HOME\.copilot\agents" | Out-Null
-Get-ChildItem "<plugin-root>\agents\*.md" | ForEach-Object {
-  $b = $_.BaseName -replace '\.agent$',''
-  Copy-Item $_.FullName "$HOME\.copilot\agents\get-it-done-$b.agent.md" -Force
-}
-```
-Verify with `/agent` (the get-it-done agents should be listed).
+**(a) Discoverability — nothing to install.** Copilot CLI reads the plugin's own `<plugin-root>/agents/*.agent.md` directly. Do NOT copy or symlink them into `~/.copilot/agents/`: Copilot deduplicates on the filename minus its `.md`/`.agent.md` suffix, so a mirrored copy just creates a second source for the same agent name. Verify with `/agent` (the get-it-done agents should be listed).
 
 **(b) Delegate by name (every spawn).** Copilot's delegation is model-driven — request it explicitly so a subagent is spawned rather than the work being done inline. In the spawn message, name the custom agent and instruct delegation, e.g.:
-> "Delegate this to the `get-it-done-executor` subagent (it runs in its own context). Pass it the inputs below and return only its final `---agent-return---` block. \<full prompt with absolute paths\>"
+> "Delegate this to the `executor` subagent (it runs in its own context). Pass it the inputs below and return only its final `---agent-return---` block. \<full prompt with absolute paths\>"
 
 The subagent runs isolated; its final response (the `---agent-return---` block) returns to you (the dispatcher) for flow control.
 
@@ -111,6 +94,21 @@ The subagent runs isolated; its final response (the `---agent-return---` block) 
 > **Verify against your Copilot CLI version**: the exact delegation phrasing/tooling evolves. The invariant to preserve: each get-it-done agent runs as an **isolated subagent** and returns its `---agent-return---` to the foreground dispatcher. If you see a sub-agent's work appearing inline in the dispatcher's own output, delegation is not happening — re-check (a) discoverability and (b) explicit by-name delegation.
 
 Always pass all reference file **absolute paths** in the agent prompt — agents start with a fresh context and cannot resolve relative paths.
+
+### Agent frontmatter — what is portable and what is not
+
+The plugin ships ONE set of agent files for both harnesses, so their frontmatter is deliberately minimal. Before adding a field, know which side actually honours it:
+
+| Field | Claude Code | Copilot CLI |
+|---|---|---|
+| `name`, `description` | required | required |
+| `model` | honoured (`opus` / `sonnet` keep the cost tiering) | silently ignored — its model IDs differ |
+| `tools` | **must stay absent** | **must stay absent** |
+| `maxTurns`, `background` | honoured | ignored |
+
+**Never add a `tools:` line to a get-it-done agent.** The two harnesses have no usable overlap in tool names: Claude Code wants `Read` / `Write` / `Edit` / `Bash` / `Glob` / `Grep`, while Copilot CLI's real tool names are `view` / `apply_patch` / `rg` / `web_fetch` / `task` / `powershell`. Copilot's documented alias table (`read` / `edit` / `search` / …) is not implemented in the CLI — it rejects even its own primary aliases with `Unknown tool name in the tool allowlist: "edit"` (github/copilot-cli#1722, #738). A `tools:` list therefore costs a warning burst and wasted retry tokens on Copilot, and on Claude Code an entry that stops resolving makes the subagent **fail to launch outright**.
+
+Omitting the field is well-defined on both sides: Claude Code "inherits every tool available to subagents", Copilot inherits the parent session's tools. The cost is that tool restrictions are no longer machine-enforced — so every read-only or narrow-write agent states its own limits in prose (see the "You are read-only" / "MUST NOT modify" clauses in `validator`, `plan-reviewer`, `code-reviewer`, `scope-verifier`, `scope-scanner`, `analyst`, `planner`). Keep those clauses in sync when editing an agent; they are the only guardrail left.
 
 ---
 
