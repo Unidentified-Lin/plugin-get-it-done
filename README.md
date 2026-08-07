@@ -42,11 +42,11 @@ plugins/get-it-done/
   README.md                     # Full architecture & usage guide
   
   agents/
-    planner.md                  # Decompose goal → DAG + PRD (rules PR-001..019)
-    analyst.md                  # Research single RQ-X independently (5 rules AR-001..005)
-    executor.md                 # Implement task T-XXX (11 rules ER-001..011)
-    validator.md                # Per-task & milestone validation (6 rules VR-001..006)
-    reflector.md                # Post-cycle learning analysis (8 rules RR-001..008)
+    planner.agent.md            # Decompose goal → DAG + PRD (rules PR-001..019)
+    analyst.agent.md            # Research single RQ-X independently (5 rules AR-001..005)
+    executor.agent.md           # Implement task T-XXX (11 rules ER-001..011)
+    validator.agent.md          # Per-task & milestone validation (6 rules VR-001..006)
+    reflector.agent.md          # Post-cycle learning analysis (8 rules RR-001..008)
   
   skills/
     blueprint/SKILL.md          # Interactive planning pipeline (Intake → … → Plan Freeze & Handoff) → hands off to /continue

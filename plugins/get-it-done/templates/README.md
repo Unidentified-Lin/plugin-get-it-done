@@ -31,7 +31,7 @@
 - **A** = agent 團隊本身怎麼運作得更好，與專案無關。寫進這裡的學習，當使用者之後開一個完全不同領域的新專案，仍然會自動套用。
 - **B** = 團隊對於*這個專案*的發現。寫進這裡的事實不可遷移 —— 它綁定在這份 codebase、這個領域、這群利害關係人身上。
 
-Reflector 寫入前一律先把學習分類成 A 或 B。完整決策矩陣參見 `agents/reflector.md`。
+Reflector 寫入前一律先把學習分類成 A 或 B。完整決策矩陣參見 `agents/reflector.agent.md`。
 
 ## Bootstrap 機制
 

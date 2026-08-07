@@ -224,7 +224,7 @@ For every item in `batch`, issue an Agent tool call. **All calls MUST be in the 
 Per-item prompt template:
 
 ```
-You are <role>. Read your role definition under agents/<role>.md (in this plugin).
+You are <role>. Read your role definition under agents/<role>.agent.md (in this plugin).
 
 Inputs for this run:
   task_id: <item.task_id>                 (planner: null; analyst: RQ-X; executor/validator: T-XXX or M-X)

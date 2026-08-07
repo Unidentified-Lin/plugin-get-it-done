@@ -35,4 +35,4 @@ Planner reads every `.get-it-done/findings/RQ-*.md` whose corresponding entry in
 
 ## Feature Landscape Research mode
 
-When the matching `research_requests.md` entry has `Mode: feature_landscape`, the Analyst follows the PR-009 protocol from `agents/analyst.md` — ≥3 comparable products, ≥10 features each with cited URLs, plus intersection (Must-Have candidates) and union-minus-intersection (Should/Nice-to-Have candidates).
+When the matching `research_requests.md` entry has `Mode: feature_landscape`, the Analyst follows the PR-009 protocol from `agents/analyst.agent.md` — ≥3 comparable products, ≥10 features each with cited URLs, plus intersection (Must-Have candidates) and union-minus-intersection (Should/Nice-to-Have candidates).

@@ -35,7 +35,7 @@ Reflector is NOT part of the relay. It runs once per goal, after every task reac
      ```bash
      BSIDE=$(python3 "$GID_PY" bside-dir --base "${GID_BASE:-.}" --plugin-data "$PLUGIN_DATA")   # → {"ok":true,"path":...}; use .path
      ```
-     Spawn reflector via Agent tool. Prompt: "Execute your reflector role per agents/reflector.md. The goal just COMPLETE'd. **bside_context_dir: `<BSIDE.path>`** (absolute — write/read ALL B-side learnings here, NOT .get-it-done/context/). Analyse validation_log + progress_log + the most recent batch handoffs. Update A-side and B-side learnings per your classification matrix. Do NOT change .get-it-done/state.md phase. Do NOT emit an agent-return block — your output is the file writes themselves."
+     Spawn reflector via Agent tool. Prompt: "Execute your reflector role per agents/reflector.agent.md. The goal just COMPLETE'd. **bside_context_dir: `<BSIDE.path>`** (absolute — write/read ALL B-side learnings here, NOT .get-it-done/context/). Analyse validation_log + progress_log + the most recent batch handoffs. Update A-side and B-side learnings per your classification matrix. Do NOT change .get-it-done/state.md phase. Do NOT emit an agent-return block — your output is the file writes themselves."
      (If `bside-dir` fails — e.g. Python/git unavailable — fall back to passing `bside_context_dir: .get-it-done/context` so reflection still runs, degraded to the old per-goal scope; append `<ISO> [BSIDE_FALLBACK] <reason>` to progress_log.md.)
 6. Reflector returns (or was skipped); EXIT. Reflection failures are logged ([REFLECT_FAIL]) but do NOT roll back COMPLETE.
 ```

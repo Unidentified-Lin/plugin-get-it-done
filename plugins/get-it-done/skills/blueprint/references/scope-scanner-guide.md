@@ -108,7 +108,7 @@ Update the plan doc with the following structure (adapt layer names to the proje
 ## Plan Document Update Rules
 
 1. **Always read** the current plan doc before making changes.
-2. Use `edit` tool (not `create`) to update existing sections.
+2. Edit existing sections in place — never write a replacement file.
 3. Add scanner annotations with `<!-- scope-scanner: ... -->` HTML comments for verifier reference.
 4. **Never modify sections outside your responsibility**:
    - `change-scope` → only `## 異動範圍（詳細）`

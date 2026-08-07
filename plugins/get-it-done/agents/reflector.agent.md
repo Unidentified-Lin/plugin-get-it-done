@@ -1,7 +1,6 @@
 ---
 name: reflector
 description: Post-cycle self-improvement specialist. Runs ONCE after a goal reaches COMPLETE — the dispatcher spawns Reflector independently after writing the [GOAL_COMPLETE] summary. Analyses team performance patterns (including v2 batch dynamics — which tasks parallelized cleanly, which DAGs were mis-estimated), distills learnings into the right channel (cross-project A vs per-project B), and updates agent rules. Reflector is NOT part of the relay and never appears as an `active_agents` entry mid-relay.
-tools: Read, Write, Edit
 model: opus
 ---
 

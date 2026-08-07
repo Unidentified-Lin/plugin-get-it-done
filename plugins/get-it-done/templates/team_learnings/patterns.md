@@ -11,7 +11,7 @@ _When the active count of provisional entries exceeds 20, Reflector prunes the l
 ## Promoted Patterns
 
 ### P-001 | Scope: all | Status: promoted
-**Pattern**: Path-and-line-number citations (e.g., `executor.md:18`) are the floor for evidence quality, not the ceiling. Every claim in a research/audit/inventory deliverable must include both.
+**Pattern**: Path-and-line-number citations (e.g., `executor.agent.md:18`) are the floor for evidence quality, not the ceiling. Every claim in a research/audit/inventory deliverable must include both.
 **Action**: Treat line-level evidence as a hard pass criterion at 4/5; bare file-name citations cost a full point. Planner encodes this in metrics; Executor produces it; Analyst mirrors it; Validator spot-checks.
 **Observed in**: (initial seed — promoted at plugin v0.1)
 

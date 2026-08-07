@@ -8,7 +8,6 @@ description: >-
   verdict to the /blueprint orchestrator, which re-spawns scope-scanner for
   correction when needed (up to 3 loops).
 model: sonnet
-tools: Read, Glob, Grep
 maxTurns: 15
 background: false
 ---
